@@ -46,7 +46,7 @@ Workers Static Assets 与 Pages 都可以托管本项目，选择其中一种即
 | 部署命令 | `npm run deploy:worker` |
 | Node.js | 24，参考 `.node-version` |
 
-`deploy:worker` 通过 `scripts/deploy-worker.mjs` 调用本地锁定版本的 `wrangler deploy --assets ./dist`。仓库根目录的 `wrangler.jsonc` 会被默认部署命令自动识别，并在部署前构建、校验 `dist/`。这是只托管静态资源的 Worker，无需额外编写后端脚本或配置数据库。
+`deploy:worker` 直接执行本地锁定版本的 `wrangler deploy`，由 `wrangler.jsonc` 统一定义静态资源目录、构建步骤和自定义域名。仓库根目录的 `wrangler.jsonc` 会被默认部署命令自动识别，并在部署前构建、校验 `dist/`。这是只托管静态资源的 Worker，无需额外编写后端脚本或配置数据库。
 
 **已有 Cloudflare 项目请检查 Settings → Build 中保存的部署命令**：改成 `npm run deploy:worker`，删除旧命令中的 `--assets .`、`--assets ./` 或 `--assets /opt/buildhome/repo`。根目录可以是仓库根目录，但静态资源目录必须是 `dist`。
 
@@ -88,25 +88,11 @@ Pages 使用上面的控制台构建设置。根目录的 `wrangler.jsonc` 是 W
 
 默认 `wrangler.jsonc` 将资源目录设为 `./dist`；根目录另有 `.assetsignore` 白名单，为仍使用旧 `--assets .` 命令的部署提供保护，只允许公开网页文件，不上传依赖、测试、配置或仓库元数据。推荐仍按上面步骤修正控制台命令。
 
-### 排查上传会话 `504 Gateway Timeout`
+### 部署时的 `504 Gateway Timeout`
 
-如果日志已经显示读取 `dist` 的 9 个文件，然后出现 `POST /accounts/.../workers/scripts/title2doi/assets-upload-session -> 504 Gateway Timeout`，失败发生在 Cloudflare 创建上传会话的接口。`Received a malformed response from the API` 是 Wrangler 将该接口返回的 HTML 错误页当作 JSON 解析的提示。
+`wrangler deploy` 会读取配置并通过 Cloudflare API 应用它。日志中的 `/assets-upload-session` 和 `/subdomain` 请求由 Wrangler 自身发出。504 表示该部署请求超时；保留原始日志和 Ray ID，稍后重新部署，持续失败时联系 Cloudflare 支持。
 
-保持部署命令为 `npm run deploy:worker`，使用最新 `main` 重新部署。创建上传会话时的 **502 / 503 / 504** 会重试部署。部署与下述域名恢复共享最多 **3 次命令尝试**，两次等待分别为 **15 秒、30 秒**；所有原始日志实时输出，持续失败会以非零状态退出。权限、配置、文件大小和未明确支持的发布阶段错误不会自动重试，取消部署也会停止重试。直接使用 `npx wrangler deploy` 不经过这层恢复。
-
-这能缓解短暂的网关错误，不能保证持续的 Cloudflare 服务故障恢复。如果三次仍失败，请稍后重新部署；持续发生时，将失败时间、接口路径与日志中的 Ray ID 提供给 Cloudflare 支持。无需修改网页文件、CSP 或自定义域名。Wrangler 上游曾有[相同接口 504、重新部署后恢复的报告](https://github.com/cloudflare/workers-sdk/issues/10438)；这并不能证明当前故障与该历史事件同源。
-
-### 排查 `Uploaded title2doi` 之后的 `/subdomain` 超时
-
-若先出现 `Uploaded title2doi (...)`，随后报 `POST /accounts/.../workers/scripts/title2doi/subdomain -> 504 Gateway Timeout`，Worker 已经上传，失败发生在同步 `workers.dev` / 版本预览地址的阶段。自定义域名配置在这一步之后，单独看到 `Uploaded` 不能证明 `title2doi.thanejoss.com` 已绑定或可访问。
-
-默认 `npm run deploy:worker` 会识别这一阶段的 **502 / 503 / 504**，等待后改用 `wrangler triggers deploy` 继续同步域名与路由，恢复时不重新上传静态文件或发布新 Worker 版本。恢复仍访问同一个 Cloudflare 接口，不能绕过持续的服务故障；不会将失败当作成功。Wrangler 本身也可能在每次命令中进行 API 重试。
-
-这项恢复使用项目锁定的 Wrangler 4.149.0 中公开但仍标为 experimental 的 `triggers deploy` 命令。自动恢复仅用于不加额外 Wrangler 参数的默认部署命令，避免丢失 `--env`、`--name` 等覆盖参数而误配置其他环境。
-
-不要通过切换 `workers_dev` 或 `preview_urls` 尝试绕过这个错误：当前 Wrangler 即使设置为 `false` 也会调用 `/subdomain`。持续失败时，请保留原始日志和 Ray ID，稍后重新部署或联系 Cloudflare 支持。部署成功后，检查 Worker 的 **Settings → Domains & Routes** 中 `title2doi.thanejoss.com` 的状态，并实际打开网站确认。
-
-已确认 Worker 上传成功、但自定义域名尚未绑定时，也可以尝试在控制台完成绑定：打开 `title2doi` Worker → **Settings → Domains & Routes → Add → Custom Domain**，输入 `title2doi.thanejoss.com`。如果已存在该绑定，直接查看状态，不重复添加。这是 Cloudflare 支持的[独立绑定方式](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/)，是否成功仍取决于接口与证书服务；不会把先前失败的构建记录改成成功。
+项目直接保留 Wrangler 的成功或失败状态，不额外运行重试脚本或 `wrangler triggers deploy`。`Uploaded title2doi` 表示上传步骤完成，不能单凭这一行确认自定义域名已配置成功。
 
 ### 边缘与静态资源
 
@@ -164,8 +150,6 @@ Crossref 可能不收录某些文献；未找到不代表文献一定没有 DOI�
 | `core.mjs` | CSL 解析、匹配评分及 Zotero 回填脚本生成 |
 | `tests/core.test.mjs` | 核心逻辑及模拟 Zotero API 测试 |
 | `scripts/build.mjs` | 生成可部署的静态目录 `dist/` |
-| `scripts/deploy-worker.mjs` | 上传会话重试，以及上传完成后的域名配置恢复 |
-| `tests/deploy.test.mjs` | 检查重试次数、失败状态及取消行为 |
 | `scripts/verify-dist.mjs` | 检查资源、页面绑定、域名、CSP 和 404 配置 |
 | `wrangler.jsonc` | 自动识别的 Workers Static Assets、构建与自定义域名配置 |
 | `.assetsignore` | 误用根目录作为静态资源目录时的公开文件白名单 |
@@ -175,9 +159,7 @@ Crossref 可能不收录某些文献；未找到不代表文献一定没有 DOI�
 
 10 组自动测试覆盖格式校验、匹配条件、原始元数据保留、预览不写入、确认后事务写入、保护已有 DOI、唯一条目对应、重复执行、生成脚本语法和 CSV 转义。
 
-部署测试覆盖上传会话 504 后恢复、上传完成后只恢复域名配置、跨阶段共享重试上限、持续网关错误停止重试、确定性错误不重试、成功/进程信号不重试及取消等待。测试使用模拟进程结果，不会调用真实部署接口。
-
-`verify:dist` 检查静态文件白名单、单文件 25 MiB 限制、DOM 绑定、站点域名、Cloudflare 模块入口、Crossref CSP 放行及真实 404 配置。`check:worker` 通过部署脚本执行 Wrangler dry run，自动构建并检查打包与配置，不发布或修改 DNS；也可用 `npx wrangler triggers deploy --dry-run` 检查恢复命令配置。dry run 不调用真实上传或域名配置接口，不能验证 Cloudflare 接口是否已经恢复。
+`verify:dist` 检查静态文件白名单、单文件 25 MiB 限制、DOM 绑定、站点域名、Cloudflare 模块入口、Crossref CSP 放行及真实 404 配置。`check:worker` 直接执行 `wrangler deploy --dry-run`，自动构建并检查打包与配置，不发布或修改 DNS。dry run 不调用真实上传或域名配置接口，不能验证 Cloudflare 接口是否已经恢复。
 
 已通过真实 Crossref 接口验证 ResNet 与 AlphaGo 示例的 DOI，接口支持浏览器跨域查询。目前尚未进行浏览器视觉/交互实测，也未在真实 Zotero 客户端运行回填脚本；首次使用请先检查预览结果。
 
