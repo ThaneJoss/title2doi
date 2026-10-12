@@ -46,7 +46,7 @@ Workers Static Assets 与 Pages 都可以托管本项目，选择其中一种即
 | 部署命令 | `npm run deploy:worker` |
 | Node.js | 24，参考 `.node-version` |
 
-`deploy:worker` 执行 `wrangler deploy --assets ./dist`。仓库根目录的 `wrangler.jsonc` 会被默认部署命令自动识别，并在部署前构建、校验 `dist/`。这是只托管静态资源的 Worker，无需额外编写后端脚本或配置数据库。
+`deploy:worker` 通过 `scripts/deploy-worker.mjs` 调用本地锁定版本的 `wrangler deploy --assets ./dist`。仓库根目录的 `wrangler.jsonc` 会被默认部署命令自动识别，并在部署前构建、校验 `dist/`。这是只托管静态资源的 Worker，无需额外编写后端脚本或配置数据库。
 
 **已有 Cloudflare 项目请检查 Settings → Build 中保存的部署命令**：改成 `npm run deploy:worker`，删除旧命令中的 `--assets .`、`--assets ./` 或 `--assets /opt/buildhome/repo`。根目录可以是仓库根目录，但静态资源目录必须是 `dist`。
 
@@ -87,6 +87,14 @@ Pages 使用上面的控制台构建设置。根目录的 `wrangler.jsonc` 是 W
 3. 无需删除 `node_modules`、压缩 `workerd` 或增加上传大小限制。
 
 默认 `wrangler.jsonc` 将资源目录设为 `./dist`；根目录另有 `.assetsignore` 白名单，为仍使用旧 `--assets .` 命令的部署提供保护，只允许公开网页文件，不上传依赖、测试、配置或仓库元数据。推荐仍按上面步骤修正控制台命令。
+
+### 排查上传会话 `504 Gateway Timeout`
+
+如果日志已经显示读取 `dist` 的 9 个文件，然后出现 `POST /accounts/.../workers/scripts/title2doi/assets-upload-session -> 504 Gateway Timeout`，失败发生在 Cloudflare 创建上传会话的接口。`Received a malformed response from the API` 是 Wrangler 将该接口返回的 HTML 错误页当作 JSON 解析的提示。
+
+保持部署命令为 `npm run deploy:worker`，使用最新 `main` 重新部署。脚本只对创建上传会话时的 **502 / 503 / 504** 重试，最多 **3 次尝试**，两次等待分别为 **15 秒、30 秒**；所有原始日志实时输出，持续失败会以非零状态退出。权限、配置、文件大小和发布 Worker 之后的错误不会自动重试，取消部署也会停止重试。直接使用 `npx wrangler deploy` 不经过这层重试。
+
+这能缓解短暂的网关错误，不能保证持续的 Cloudflare 服务故障恢复。如果三次仍失败，请稍后重新部署；持续发生时，将失败时间、接口路径与日志中的 Ray ID 提供给 Cloudflare 支持。无需修改网页文件、CSP 或自定义域名。Wrangler 上游曾有[相同接口 504、重新部署后恢复的报告](https://github.com/cloudflare/workers-sdk/issues/10438)；这并不能证明当前故障与该历史事件同源。
 
 ### 边缘与静态资源
 
@@ -144,6 +152,8 @@ Crossref 可能不收录某些文献；未找到不代表文献一定没有 DOI�
 | `core.mjs` | CSL 解析、匹配评分及 Zotero 回填脚本生成 |
 | `tests/core.test.mjs` | 核心逻辑及模拟 Zotero API 测试 |
 | `scripts/build.mjs` | 生成可部署的静态目录 `dist/` |
+| `scripts/deploy-worker.mjs` | 调用 Wrangler，并对上传会话网关错误进行有限重试 |
+| `tests/deploy.test.mjs` | 检查重试次数、失败状态及取消行为 |
 | `scripts/verify-dist.mjs` | 检查资源、页面绑定、域名、CSP 和 404 配置 |
 | `wrangler.jsonc` | 自动识别的 Workers Static Assets、构建与自定义域名配置 |
 | `.assetsignore` | 误用根目录作为静态资源目录时的公开文件白名单 |
@@ -153,7 +163,9 @@ Crossref 可能不收录某些文献；未找到不代表文献一定没有 DOI�
 
 10 组自动测试覆盖格式校验、匹配条件、原始元数据保留、预览不写入、确认后事务写入、保护已有 DOI、唯一条目对应、重复执行、生成脚本语法和 CSV 转义。
 
-`verify:dist` 检查静态文件白名单、单文件 25 MiB 限制、DOM 绑定、站点域名、Cloudflare 模块入口、Crossref CSP 放行及真实 404 配置。`check:worker` 使用默认配置发现执行 Wrangler dry run，自动构建并检查打包与配置，不发布或修改 DNS。
+另有 5 组部署测试覆盖上传会话 504 后恢复、持续网关错误停止重试、确定性错误不重试、成功/进程信号不重试及取消等待。测试使用模拟进程结果，不会调用真实部署接口。
+
+`verify:dist` 检查静态文件白名单、单文件 25 MiB 限制、DOM 绑定、站点域名、Cloudflare 模块入口、Crossref CSP 放行及真实 404 配置。`check:worker` 通过部署脚本执行 Wrangler dry run，自动构建并检查打包与配置，不发布或修改 DNS；dry run 不创建真实上传会话，不能验证 Cloudflare 接口是否已经恢复。
 
 已通过真实 Crossref 接口验证 ResNet 与 AlphaGo 示例的 DOI，接口支持浏览器跨域查询。目前尚未进行浏览器视觉/交互实测，也未在真实 Zotero 客户端运行回填脚本；首次使用请先检查预览结果。
 

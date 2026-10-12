@@ -9,8 +9,8 @@
     "build": "node scripts/build.mjs",
     "verify:dist": "node scripts/verify-dist.mjs",
     "dev": "wrangler dev",
-    "deploy:worker": "wrangler deploy --assets ./dist",
-    "check:worker": "wrangler deploy --dry-run"
+    "deploy:worker": "node scripts/deploy-worker.mjs",
+    "check:worker": "node scripts/deploy-worker.mjs --dry-run"
   },
   "engines": {
     "node": ">=22"
