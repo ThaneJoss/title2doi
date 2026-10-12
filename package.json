@@ -1,0 +1,9 @@
+{
+  "name": "title2doi",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Batch DOI lookup and Zotero metadata repair with Crossref",
+  "type": "module",
+  "scripts": { "test": "node --test tests/*.test.mjs" },
+  "engines": { "node": ">=18" }
+}

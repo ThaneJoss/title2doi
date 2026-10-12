@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#234b40">
+  <meta name="description" content="批量导入 Zotero 文献，通过 Crossref 补全缺失 DOI。核对匹配结果，一次复制脚本回填原文献。">
+  <title>DOI 补全工作台 · 引文</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='12' fill='%23234b40'/%3E%3Ctext x='8' y='29' font-size='29' fill='%23fff' font-family='serif'%3Ed.%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <svg class="svg-library" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+    <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M4 12h16m-6-6 6 6-6 6"/></symbol>
+    <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V3m-5 5 5-5 5 5M4 15v5a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-5"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9zm0 0v6h6M8 13h8m-8 4h5"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+    <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 4.2 1.8c-1 .7-1.7 1.1-1.7 2.7m0 3h.01"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V4a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h4"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></symbol>
+    <symbol id="i-link" viewBox="0 0 24 24"><path d="m10 13 4-4m-6 7-1 1a4 4 0 0 1-6-6l5-5a4 4 0 0 1 6 0m0 12a4 4 0 0 0 6 0l5-5a4 4 0 0 0-6-6l-1 1" transform="translate(0 1)"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v13m-5-5 5 5 5-5M4 17v4h16v-4"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6zm-4 9 3 3 5-6"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 7h16M4 17h16"/><circle cx="8" cy="7" r="3"/><circle cx="16" cy="17" r="3"/></symbol>
+  </svg>
+  <aside class="sidebar">
+    <a class="brand" href="#top" aria-label="引文 DOI 工作台首页"><span class="brand-mark">d<span>·</span></span><div>引文<span class="brand-caption">DOI WORKSPACE</span></div></a>
+    <div class="sidebar-label">我的工作空间</div>
+    <nav aria-label="主导航">
+      <a class="nav-link active" href="#top"><svg><use href="#i-grid"/></svg>DOI 补全<span class="nav-dot"></span></a>
+      <a class="nav-link" href="#results"><svg><use href="#i-file"/></svg>匹配结果<span id="nav-count" class="nav-count">0</span></a>
+      <button class="nav-link" id="help-nav"><svg><use href="#i-help"/></svg>使用指南</button>
+    </nav>
+    <div class="sidebar-bottom">
+      <div class="sidebar-note"><span class="tiny-spark">✳</span><h3>把时间留给研究</h3><p>整批处理，一次回填。<br>让文献整理轻一点。</p></div>
+      <a class="source-link" href="https://www.crossref.org/" target="_blank" rel="noopener noreferrer"><span class="crossref-mark"><i></i><i></i><i></i></span>Powered by Crossref <span>↗</span></a>
+      <div class="independent">独立辅助工具 · 非 Zotero 官方产品</div>
+    </div>
+  </aside>
+  <div class="page" id="top">
+    <header class="topbar"><div class="breadcrumb">文献工具 <span>/</span> <strong>DOI 补全工作台</strong></div><button class="quiet-button" id="help-top"><svg><use href="#i-help"/></svg>如何使用</button></header>
+    <main>
+      <section class="hero">
+        <div><div class="eyebrow"><span></span>为你的 ZOTERO 文献库</div><h1>给好文献，<em>补上 DOI。</em></h1><p class="hero-description">导入文献，查找缺失标识符，核对后一次回填。<br class="mobile-break">繁琐的整理工作，到这里就好。</p></div>
+        <div class="hero-art" aria-hidden="true"><div class="art-paper back"></div><div class="art-paper front"><span class="art-corner"></span><b>doi<span>·</span></b><i></i><i></i><small>10. / research</small></div><span class="art-check"><svg><use href="#i-check"/></svg></span><span class="art-star">✳</span></div>
+      </section>
+      <div class="workflow" aria-label="处理步骤"><span id="step-import" class="step current"><b>01</b> 导入文献</span><i></i><span id="step-query" class="step"><b>02</b> 查询与核对</span><i></i><span id="step-export" class="step"><b>03</b> 批量回填 Zotero</span><span class="workflow-end">CSL JSON <svg><use href="#i-arrow"/></svg> DOI</span></div>
+      <div id="notice" class="notice" role="status" hidden></div>
+      <div class="import-grid">
+        <section class="panel import-panel" id="import-section">
+          <div class="section-heading"><div><span class="section-no">01</span><h2>导入你的文献</h2></div><span class="tag neutral">CSL JSON</span></div>
+          <div class="input-tabs" role="tablist" aria-label="导入方式"><button class="input-tab selected" role="tab" aria-selected="true" aria-controls="file-panel" id="file-tab">上传文件</button><button class="input-tab" role="tab" aria-selected="false" aria-controls="paste-panel" id="paste-tab">粘贴内容</button></div>
+          <div id="file-panel" role="tabpanel" aria-labelledby="file-tab">
+            <button id="dropzone" class="dropzone"><span class="upload-icon"><svg><use href="#i-upload"/></svg></span><strong>将导出的文件拖到这里</strong><span>或 <u>点击选择文件</u></span><small>.json 格式 · 最多 5,000 条 / 15 MB</small></button>
+            <input type="file" id="file-input" accept=".json,application/json" hidden>
+          </div>
+          <div id="paste-panel" role="tabpanel" aria-labelledby="paste-tab" hidden><label class="sr-only" for="paste-input">Zotero CSL JSON 内容</label><textarea id="paste-input" spellcheck="false" placeholder='粘贴 Zotero 导出的 CSL JSON，例如：&#10;[&#10;  { "type": "article-journal", "title": "…",&#10;    "author": [{ "family": "…" }] }&#10;]'></textarea><div class="paste-actions"><span>支持完整数组或单个条目</span><button class="button small" id="parse-paste">解析文献 <svg><use href="#i-arrow"/></svg></button></div></div>
+          <div class="import-foot"><span id="import-info">还没有准备好文件？</span><button id="sample-button" class="text-button">试用 4 条示例 <span>↗</span></button></div>
+        </section>
+        <aside class="guide-panel">
+          <div class="guide-eyebrow">从 ZOTERO 开始</div><h2>只需导出一次。</h2>
+          <ol class="mini-guide"><li><span>1</span><div><strong>选中需要补全的文献</strong><p>在 Zotero 中批量选择任意条目。</p></div></li><li><span>2</span><div><strong>右键 → 导出条目</strong><p>格式选择 <code>CSL JSON</code>，保存文件。</p></div></li><li><span>3</span><div><strong>上传文件，开始匹配</strong><p>已有 DOI 的条目会自动跳过。</p></div></li></ol>
+          <div class="guide-bottom"><svg><use href="#i-shield"/></svg><p>文件在浏览器内解析。查询时仅将标题、第一作者和年份发送给 Crossref。</p></div>
+        </aside>
+      </div>
+      <section class="stats" aria-label="文献统计"><div><span>已导入文献</span><strong id="stat-total">0</strong><small>条</small></div><div><span>缺失 DOI</span><strong id="stat-missing">0</strong><small>条待补全</small></div><div><span><i class="dot green"></i> 高匹配候选</span><strong id="stat-high">0</strong><small>条</small></div><div><span><i class="dot amber"></i> 需要核对</span><strong id="stat-review">0</strong><small>条</small></div></section>
+      <section class="panel results-panel" id="results">
+        <div class="section-heading result-heading"><div><span class="section-no">02</span><h2>查询与核对</h2><span id="result-count" class="count-label">0 条文献</span></div><div class="heading-actions"><button id="settings-button" class="quiet-button" title="查询设置"><svg><use href="#i-settings"/></svg><span>查询设置</span></button><button id="start-button" class="button" disabled><svg><use href="#i-search"/></svg><span>开始批量查询</span></button><button id="pause-button" class="button secondary" hidden>暂停查询</button></div></div>
+        <div id="settings-panel" class="settings-panel" hidden><div><label for="email">Crossref 联系邮箱 <small>选填</small></label><input type="email" id="email" placeholder="you@university.edu" autocomplete="email"><p>填写后随查询发送给 Crossref，用于其礼貌访问通道。无需 API Key。</p></div><div><strong>稳妥地批量查询</strong><p>逐条请求，自动等待限流重试；暂停后可继续。未找到不代表该文献没有 DOI。</p><a href="https://www.crossref.org/documentation/retrieve-metadata/rest-api/access-and-authentication/" target="_blank" rel="noopener noreferrer">Crossref 接口说明 ↗</a></div></div>
+        <div id="progress-box" class="progress-box" hidden><div><span id="progress-text" role="status">正在查询…</span><span id="progress-numbers"></span></div><progress id="progress" value="0" max="100" aria-label="批量查询进度"></progress></div>
+        <div class="result-toolbar"><div id="filters" class="filters" role="group" aria-label="筛选文献"><button data-filter="all" class="active">全部</button><button data-filter="high">高匹配</button><button data-filter="review">待核对</button><button data-filter="confirmed">已确认</button><button data-filter="unresolved">未解决</button></div><div class="search-box"><svg><use href="#i-search"/></svg><input id="search" aria-label="搜索标题、作者或 DOI" placeholder="搜索标题 / 作者 / DOI"></div></div>
+        <div id="table-area" class="table-area"><table><thead><tr><th class="select-cell"><span class="sr-only">确认</span></th><th>文献信息</th><th>匹配状态</th><th>DOI 候选</th><th class="action-cell">操作</th></tr></thead><tbody id="result-rows"></tbody></table><div id="empty-state" class="empty-state"><div class="empty-icon"><svg><use href="#i-file"/></svg><span>+</span></div><h3>下一篇被找到的，就是你的文献</h3><p>先导入 CSL JSON 文件，匹配结果会显示在这里。</p></div></div>
+        <div id="table-footer" class="table-footer" hidden><span id="page-info"></span><div><button id="previous-page" class="quiet-button">上一页</button><button id="next-page" class="quiet-button">下一页</button></div></div>
+        <div class="results-note"><span><i class="dot green"></i> 高匹配：标题、作者、年份等信息一致</span><span>匹配分数用于排序，不代表正确概率；回填前请核对。</span></div>
+      </section>
+      <section class="export-strip" id="export-section"><div class="export-icon"><svg><use href="#i-copy"/></svg></div><div class="export-info"><div><span class="section-no">03</span><h2>让 DOI 回到原来的文献里</h2></div><p>已确认 <strong id="confirmed-count">0</strong> 条 · 复制一段脚本，整批填入 Zotero 的空白 DOI。</p></div><div class="export-actions"><button id="confirm-high" class="button secondary" disabled>确认全部高匹配</button><button id="export-button" class="button" disabled>批量回填 Zotero <svg><use href="#i-arrow"/></svg></button></div></section>
+      <footer class="page-footer"><span><span class="dot green"></span> 无需账号密钥 · 保留原始元数据</span><div><button id="download-report" class="text-button" disabled>导出核对表</button><span>·</span><button id="clear-button" class="text-button" disabled>清空本地记录</button></div><small id="storage-status">进度自动保存在此浏览器</small></footer>
+    </main>
+  </div>
+  <dialog id="candidate-dialog" class="dialog candidate-dialog"><div class="dialog-heading"><div><div class="eyebrow">核对候选记录</div><h2>找到的是同一篇文献吗？</h2></div><button class="icon-button" data-close="candidate-dialog" aria-label="关闭候选窗口"><svg><use href="#i-close"/></svg></button></div><div id="candidate-original" class="candidate-original"></div><div class="candidate-note">请核对标题、作者、年份和发表版本。Crossref 的候选记录不一定属于原文献。</div><div id="candidate-list"></div><div class="dialog-footer"><button id="reject-candidates" class="button secondary">这些都不匹配</button><button class="quiet-button" data-close="candidate-dialog">稍后核对</button></div></dialog>
+  <dialog id="export-dialog" class="dialog export-dialog"><div class="dialog-heading"><div><div class="eyebrow">一次复制 · 批量回填</div><h2>把 <span id="export-count">0</span> 个 DOI 带回 Zotero</h2></div><button class="icon-button" data-close="export-dialog" aria-label="关闭回填窗口"><svg><use href="#i-close"/></svg></button></div>
+    <div class="callout"><svg><use href="#i-link"/></svg><div><strong>直接补全原条目，保留附件、笔记和引用关系。</strong><p>仅对所选文献的空白 DOI 写入；条目对应不明确或类型不支持时会跳过。</p></div></div>
+    <ol class="export-steps"><li><b>1</b><div><strong>在 Zotero 主窗口选中原来的那批文献</strong><p>可以一次选中整批。脚本仅处理所选条目；运行前请备份 Zotero 数据。</p></div></li><li><b>2</b><div><strong>打开「工具 → 开发者 → Run JavaScript」</strong><p>中文界面可能显示为「运行 JavaScript」。勾选「Run as async function / 作为异步函数运行」。</p></div></li><li><b>3</b><div><strong>先预览，再一次性回填</strong><p>粘贴预览脚本运行，查看右侧待更新列表；核对后粘贴回填脚本运行，并在弹窗中确认。</p></div></li></ol>
+    <div class="script-actions"><button id="copy-preview" class="button secondary"><svg><use href="#i-copy"/></svg>① 复制预览脚本</button><button id="copy-apply" class="button"><svg><use href="#i-copy"/></svg>② 复制回填脚本</button></div>
+    <details class="script-details"><summary>查看 / 手动复制脚本</summary><div class="script-mode"><button id="show-preview" class="text-button">预览脚本</button><span>·</span><button id="show-apply" class="text-button">回填脚本</button></div><label class="sr-only" for="script-output">Zotero 回填脚本</label><textarea id="script-output" readonly spellcheck="false"></textarea><button id="download-script" class="text-button">下载当前脚本 .js</button></details>
+    <details class="other-exports"><summary>其他导出方式</summary><p>导出补全后的 CSL JSON 会保留本批全部条目。重新导入 Zotero 会新建条目，不能用于更新现有文献。</p><div><button id="download-json" class="button secondary small"><svg><use href="#i-download"/></svg>下载 CSL JSON</button><button id="copy-json" class="button secondary small">复制 CSL JSON</button><button id="export-csv" class="button secondary small">下载核对表 CSV</button></div></details>
+    <p class="footnote">批量脚本使用 Zotero 桌面端 JavaScript API，无需 Zotero API Key。<a href="https://www.zotero.org/support/dev/client_coding/javascript_api" target="_blank" rel="noopener noreferrer">官方说明 ↗</a></p>
+  </dialog>
+  <dialog id="help-dialog" class="dialog help-dialog"><div class="dialog-heading"><div><div class="eyebrow">使用指南</div><h2>从导出到回填，全程批量。</h2></div><button class="icon-button" data-close="help-dialog" aria-label="关闭指南"><svg><use href="#i-close"/></svg></button></div><div class="help-content"><h3>01 / 导出并导入</h3><p>在 Zotero 中多选文献，右键「导出条目」，格式选择「CSL JSON」。将 .json 文件拖入网页，或打开文件复制全部内容。每批最多 5,000 条 / 15 MB；已有 DOI 自动跳过。</p><h3>02 / 查询并确认</h3><p>点击「开始批量查询」。Crossref 根据标题、第一作者和年份返回至多 5 个候选，网页对标题、作者、年份和文献类型进行比对排序。你可以暂停、继续，并重试查询失败的条目。</p><p>高匹配结果可整批确认；其余结果通过「核对」选择。请注意预印本、正式发表版、勘误与同名文献。没有 DOI 或未被 Crossref 收录的文献可能无法查到。</p><h3>03 / 一次粘贴，补全原条目</h3><p>点击「批量回填 Zotero」，按窗口步骤在 Zotero 中运行预览和回填脚本。脚本仅写入已确认且唯一对应的所选原条目，保留已有 DOI。无法唯一对应的条目会在运行结果中列出。</p><h3>数据与进度</h3><p>文献与查询进度保存在当前浏览器的本地存储，可用页面底部「清空本地记录」删除。浏览器隐私模式或存储空间不足时可能无法保存；导出核对表可留存结果。</p><p>查询仅向 api.crossref.org 发送标题、第一作者、年份，以及你选填的联系邮箱。不会上传 PDF，也不需要 Zotero 登录信息。Crossref 接口的可用性取决于其服务状态及你的网络连接。</p><div class="help-links"><a href="https://www.zotero.org/support/dev/client_coding/javascript_api" target="_blank" rel="noopener noreferrer">Zotero 批量编辑文档 ↗</a><a href="https://www.crossref.org/documentation/retrieve-metadata/rest-api/" target="_blank" rel="noopener noreferrer">Crossref API 文档 ↗</a></div></div></dialog>
+  <div id="toast" class="toast" role="status" hidden></div>
+  <script type="module" src="app.mjs"></script>
+</body>
+</html>
