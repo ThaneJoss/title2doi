@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://title2doi.thanejoss.com/sitemap.xml

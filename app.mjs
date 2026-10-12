@@ -203,7 +203,7 @@ async function copy(text,button){
   try{
     if(navigator.clipboard?.writeText) await navigator.clipboard.writeText(text);
     else {
-      const area=document.createElement('textarea');area.value=text;area.style.cssText='position:fixed;left:-9999px;top:0;';
+      const area=document.createElement('textarea');area.value=text;area.className='clipboard-fallback';
       const parent=document.querySelector('dialog[open]')||document.body;parent.append(area);area.select();const ok=document.execCommand('copy');area.remove();if(!ok) throw new Error('copy');
     }
     toast('已复制，可粘贴到 Zotero。');
