@@ -66,3 +66,139 @@ test('cancelling the retry wait prevents another deployment attempt', async () =
   }), { name: 'AbortError' });
   assert.equal(attempts, 1);
 });
+
+const subdomain = '/accounts/example/workers/scripts/title2doi/subdomain';
+const subdomainFailure = (status = 504, { uploaded = true, code = 1 } = {}) => ({
+  code,
+  output: `${uploaded ? '\u001b[32mUploaded title2doi (10.25 sec)\u001b[0m\n' : ''}\u001b[31m[ERROR]\u001b[0m Received a malformed response from the API\n<!DOCTYPE html>\nPOST ${subdomain} -> ${status} Gateway Timeout\nCloudflare Ray ID: example-DFW`,
+});
+
+test('the reported post-upload subdomain timeout recovers triggers without uploading again', async () => {
+  let uploads = 0;
+  let recoveries = 0;
+  const waits = [];
+  const code = await deployWithRetry(async () => {
+    uploads++;
+    return subdomainFailure();
+  }, {
+    ...quiet,
+    recoverTriggers: async () => {
+      recoveries++;
+      return { code: 0, output: 'Deployed title2doi triggers\n  title2doi.thanejoss.com (custom domain)' };
+    },
+    wait: async ms => waits.push(ms),
+  });
+  assert.equal(code, 0);
+  assert.equal(uploads, 1);
+  assert.equal(recoveries, 1);
+  assert.deepEqual(waits, [15_000]);
+});
+
+test('persistent subdomain gateway errors share the three-attempt cap and never reupload', async () => {
+  let uploads = 0;
+  let recoveries = 0;
+  const waits = [];
+  const code = await deployWithRetry(async () => {
+    uploads++;
+    return subdomainFailure(502);
+  }, {
+    ...quiet,
+    recoverTriggers: async () => subdomainFailure([503, 504][recoveries++], { uploaded: false, code: 7 }),
+    wait: async ms => waits.push(ms),
+  });
+  assert.equal(code, 7);
+  assert.equal(uploads, 1);
+  assert.equal(recoveries, 2);
+  assert.deepEqual(waits, [15_000, 30_000]);
+});
+
+test('a trigger recovery permission error stops immediately with its original exit code', async () => {
+  let uploads = 0;
+  let recoveries = 0;
+  const waits = [];
+  const code = await deployWithRetry(async () => {
+    uploads++;
+    return subdomainFailure();
+  }, {
+    ...quiet,
+    recoverTriggers: async () => {
+      recoveries++;
+      return subdomainFailure(403, { uploaded: false, code: 9 });
+    },
+    wait: async ms => waits.push(ms),
+  });
+  assert.equal(code, 9);
+  assert.equal(uploads, 1);
+  assert.equal(recoveries, 1);
+  assert.deepEqual(waits, [15_000]);
+});
+
+test('subdomain recovery requires both a completed upload marker and a recovery callback', async () => {
+  for (const [uploaded, callback] of [[false, true], [true, false], [false, false]]) {
+    let uploads = 0;
+    const options = { ...quiet, wait: async () => assert.fail('Unconfirmed upload must not be retried') };
+    if (callback) options.recoverTriggers = async () => assert.fail('Recovery requires a completed upload');
+    const code = await deployWithRetry(async () => {
+      uploads++;
+      return subdomainFailure(504, { uploaded, code: 6 });
+    }, options);
+    assert.equal(code, 6);
+    assert.equal(uploads, 1);
+  }
+});
+
+test('an upload-session failure followed by a subdomain timeout leaves one trigger recovery attempt', async () => {
+  let uploads = 0;
+  let recoveries = 0;
+  const waits = [];
+  const code = await deployWithRetry(async () => ++uploads === 1 ? failure() : subdomainFailure(), {
+    ...quiet,
+    recoverTriggers: async () => {
+      recoveries++;
+      return subdomainFailure(504, { uploaded: false, code: 8 });
+    },
+    wait: async ms => waits.push(ms),
+  });
+  assert.equal(code, 8);
+  assert.equal(uploads, 2);
+  assert.equal(recoveries, 1);
+  assert.deepEqual(waits, [15_000, 30_000]);
+});
+
+test('a different recovery failure never falls back to a full deployment', async () => {
+  let uploads = 0;
+  let recoveries = 0;
+  const waits = [];
+  const code = await deployWithRetry(async () => {
+    uploads++;
+    return subdomainFailure();
+  }, {
+    ...quiet,
+    recoverTriggers: async () => {
+      recoveries++;
+      return failure(504, 5);
+    },
+    wait: async ms => waits.push(ms),
+  });
+  assert.equal(code, 5);
+  assert.equal(uploads, 1);
+  assert.equal(recoveries, 1);
+  assert.deepEqual(waits, [15_000]);
+});
+
+test('cancelling after upload prevents trigger recovery and preserves cancellation', async () => {
+  const controller = new AbortController();
+  let uploads = 0;
+  let recoveries = 0;
+  await assert.rejects(deployWithRetry(async () => {
+    uploads++;
+    return subdomainFailure();
+  }, {
+    ...quiet,
+    recoverTriggers: async () => { recoveries++; return { code: 0, output: '' }; },
+    signal: controller.signal,
+    wait: async () => controller.abort(),
+  }), { name: 'AbortError' });
+  assert.equal(uploads, 1);
+  assert.equal(recoveries, 0);
+});

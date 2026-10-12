@@ -16,25 +16,41 @@ export function isUploadSessionGatewayError(output) {
   return /\bPOST\s+\/accounts\/[^\s/]+\/workers\/scripts\/[^\s/]+\/assets-upload-session\s*->\s*(?:502|503|504)\b/.test(stripVTControlCharacters(output));
 }
 
+function isSubdomainGatewayError(output) {
+  return /\bPOST\s+\/accounts\/[^\s/]+\/workers\/scripts\/title2doi\/subdomain\s*->\s*(?:502|503|504)\b/.test(stripVTControlCharacters(output));
+}
+
 export async function deployWithRetry(runAttempt, {
   wait = ms => sleep(ms, undefined, { signal }),
   report = message => console.error(message),
   signal,
+  recoverTriggers,
 } = {}) {
+  let recovering = false;
   for (let attempt = 0; attempt <= retryDelays.length; attempt++) {
     signal?.throwIfAborted();
-    report(`[title2doi] 部署尝试 ${attempt + 1}/${retryDelays.length + 1}`);
-    const result = await runAttempt();
+    report(`[title2doi] ${recovering ? '恢复域名配置' : '部署尝试'} ${attempt + 1}/${retryDelays.length + 1}`);
+    const result = await (recovering ? recoverTriggers() : runAttempt());
     signal?.throwIfAborted();
-    if (result.code === 0 || result.signal || !isUploadSessionGatewayError(result.output)) {
+    if (result.code === 0 || result.signal) {
+      return exitCode(result);
+    }
+    const uploaded = /\bUploaded title2doi\s*\(/.test(stripVTControlCharacters(result.output));
+    if (recoverTriggers && isSubdomainGatewayError(result.output) && (recovering || uploaded)) {
+      // The Worker is already uploaded. Resume only trigger configuration;
+      // never publish another version in response to a post-upload failure.
+      recovering = true;
+    } else if (recovering || !isUploadSessionGatewayError(result.output)) {
       return exitCode(result);
     }
     if (attempt === retryDelays.length) {
-      report('[title2doi] Cloudflare 上传会话仍返回网关错误。已停止重试；请稍后重新部署，持续失败时携带原始日志和 Ray ID 联系 Cloudflare。');
+      report(`[title2doi] Cloudflare ${recovering ? '域名配置' : '上传会话'}仍返回网关错误。已停止重试；请稍后重新部署，持续失败时携带原始日志和 Ray ID 联系 Cloudflare。`);
       return exitCode(result);
     }
     const delay = retryDelays[attempt];
-    report(`[title2doi] Cloudflare 创建上传会话失败，将在 ${delay / 1000} 秒后重试。`);
+    report(recovering
+      ? `[title2doi] Worker 已上传，将在 ${delay / 1000} 秒后通过 wrangler triggers deploy 恢复域名配置。`
+      : `[title2doi] Cloudflare 创建上传会话失败，将在 ${delay / 1000} 秒后重试。`);
     await wait(delay);
   }
 }
@@ -44,7 +60,7 @@ function runWrangler(args, signal) {
   const packagePath = require.resolve('wrangler/package.json');
   const wrangler = resolve(dirname(packagePath), require('wrangler/package.json').bin.wrangler);
   return new Promise((resolveAttempt, reject) => {
-    const child = spawn(process.execPath, [wrangler, 'deploy', '--assets', './dist', ...args], {
+    const child = spawn(process.execPath, [wrangler, ...args], {
       cwd: root,
       stdio: ['inherit', 'pipe', 'pipe'],
       signal,
@@ -74,9 +90,17 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   process.once('SIGINT', interrupt);
   process.once('SIGTERM', terminate);
   try {
+    const args = process.argv.slice(2);
     process.exitCode = await deployWithRetry(
-      () => runWrangler(process.argv.slice(2), controller.signal),
-      { signal: controller.signal },
+      () => runWrangler(['deploy', '--assets', './dist', ...args], controller.signal),
+      {
+        signal: controller.signal,
+        // Only resume the project's default command. Extra CLI overrides can
+        // change name/env/routes, so never discard them and target production.
+        recoverTriggers: args.length === 0
+          ? () => runWrangler(['triggers', 'deploy'], controller.signal)
+          : undefined,
+      },
     );
   } catch (error) {
     process.exitCode = cancellationCode ?? 1;
