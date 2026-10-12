@@ -8,9 +8,9 @@
     "test": "node --test tests/*.test.mjs",
     "build": "node scripts/build.mjs",
     "verify:dist": "node scripts/verify-dist.mjs",
-    "dev": "npm run build && wrangler dev --config wrangler.worker.jsonc",
-    "deploy:worker": "wrangler deploy --config wrangler.worker.jsonc",
-    "check:worker": "npm run build && wrangler deploy --config wrangler.worker.jsonc --dry-run"
+    "dev": "wrangler dev",
+    "deploy:worker": "wrangler deploy --assets ./dist",
+    "check:worker": "wrangler deploy --dry-run"
   },
   "engines": {
     "node": ">=22"

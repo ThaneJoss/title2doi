@@ -46,7 +46,9 @@ Workers Static Assets 与 Pages 都可以托管本项目，选择其中一种即
 | 部署命令 | `npm run deploy:worker` |
 | Node.js | 24，参考 `.node-version` |
 
-`deploy:worker` 执行 `wrangler deploy --config wrangler.worker.jsonc`，读取静态资源目录 `dist/`。这是只托管静态资源的 Worker，无需额外编写后端脚本或配置数据库。
+`deploy:worker` 执行 `wrangler deploy --assets ./dist`。仓库根目录的 `wrangler.jsonc` 会被默认部署命令自动识别，并在部署前构建、校验 `dist/`。这是只托管静态资源的 Worker，无需额外编写后端脚本或配置数据库。
+
+**已有 Cloudflare 项目请检查 Settings → Build 中保存的部署命令**：改成 `npm run deploy:worker`，删除旧命令中的 `--assets .`、`--assets ./` 或 `--assets /opt/buildhome/repo`。根目录可以是仓库根目录，但静态资源目录必须是 `dist`。
 
 配置中的 Custom Domain 为 `title2doi.thanejoss.com`。确保 `thanejoss.com` 在部署账户中，并授予正常部署所需的权限；Wrangler 会在部署时按配置绑定域名及证书。若该域名已有其他绑定，先在 Cloudflare 中处理冲突。
 
@@ -74,7 +76,17 @@ npm run deploy:worker
 
 首次部署成功后，进入 Pages 项目的 **Custom domains → Set up a custom domain**，添加 `title2doi.thanejoss.com`，按照向导完成 DNS 验证。必须先在 Pages 项目内添加域名，不能仅手动添加 CNAME；若向导要求填写 CNAME 目标，使用该项目实际分配的 `*.pages.dev` 地址。
 
-Workers 专用配置使用 `wrangler.worker.jsonc` 文件名，由 Workers 部署命令显式读取，避免与 Pages 的默认配置发现混淆。Pages 使用上面的控制台构建设置，无需额外的 Wrangler 配置。
+Pages 使用上面的控制台构建设置。根目录的 `wrangler.jsonc` 是 Workers 配置，不包含 `pages_build_output_dir`；Pages 可能提示忽略该文件，继续使用控制台中的 `dist` 输出目录即可。不要将 Workers 的 `deploy:worker` 命令用作 Pages 的构建命令。
+
+### 排查 `Asset too large` / `node_modules/workerd/bin/workerd`
+
+若日志显示静态资源目录为 `/opt/buildhome/repo`，说明部署命令把整个仓库作为资源目录，因而扫描到了 `node_modules` 中的工具程序。
+
+1. 打开 Worker 的 **Settings → Build**，把构建命令设为 `npm run build`，部署命令设为 `npm run deploy:worker`。
+2. 保存后部署 `main` 的最新提交，不要重试旧提交。正常日志应显示资源来自 `dist`。
+3. 无需删除 `node_modules`、压缩 `workerd` 或增加上传大小限制。
+
+默认 `wrangler.jsonc` 将资源目录设为 `./dist`；根目录另有 `.assetsignore` 白名单，为仍使用旧 `--assets .` 命令的部署提供保护，只允许公开网页文件，不上传依赖、测试、配置或仓库元数据。推荐仍按上面步骤修正控制台命令。
 
 ### 边缘与静态资源
 
@@ -133,14 +145,15 @@ Crossref 可能不收录某些文献；未找到不代表文献一定没有 DOI�
 | `tests/core.test.mjs` | 核心逻辑及模拟 Zotero API 测试 |
 | `scripts/build.mjs` | 生成可部署的静态目录 `dist/` |
 | `scripts/verify-dist.mjs` | 检查资源、页面绑定、域名、CSP 和 404 配置 |
-| `wrangler.worker.jsonc` | Workers Static Assets 与自定义域名配置 |
+| `wrangler.jsonc` | 自动识别的 Workers Static Assets、构建与自定义域名配置 |
+| `.assetsignore` | 误用根目录作为静态资源目录时的公开文件白名单 |
 | `_headers`、`404.html` | Workers / Pages 共用响应头与错误页 |
 
 ## 验证范围
 
 10 组自动测试覆盖格式校验、匹配条件、原始元数据保留、预览不写入、确认后事务写入、保护已有 DOI、唯一条目对应、重复执行、生成脚本语法和 CSV 转义。
 
-`verify:dist` 检查静态文件白名单、DOM 绑定、站点域名、Cloudflare 模块入口、Crossref CSP 放行及真实 404 配置。`check:worker` 执行 Wrangler dry run，仅检查打包与配置，不发布或修改 DNS。
+`verify:dist` 检查静态文件白名单、单文件 25 MiB 限制、DOM 绑定、站点域名、Cloudflare 模块入口、Crossref CSP 放行及真实 404 配置。`check:worker` 使用默认配置发现执行 Wrangler dry run，自动构建并检查打包与配置，不发布或修改 DNS。
 
 已通过真实 Crossref 接口验证 ResNet 与 AlphaGo 示例的 DOI，接口支持浏览器跨域查询。目前尚未进行浏览器视觉/交互实测，也未在真实 Zotero 客户端运行回填脚本；首次使用请先检查预览结果。
 

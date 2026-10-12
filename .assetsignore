@@ -1,0 +1,12 @@
+# Guard legacy dashboard commands that still use --assets .
+# Exclude everything except the public files at the repository root.
+*
+!/index.html
+!/404.html
+!/styles.css
+!/app.mjs
+!/core.mjs
+!/favicon.svg
+!/robots.txt
+!/sitemap.xml
+# _headers is read by Wrangler as configuration, not uploaded as an asset.

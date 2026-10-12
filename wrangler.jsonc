@@ -2,6 +2,9 @@
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "title2doi",
   "compatibility_date": "2026-10-12",
+  "build": {
+    "command": "npm run build && npm run verify:dist"
+  },
   "assets": {
     "directory": "./dist",
     "not_found_handling": "404-page"
