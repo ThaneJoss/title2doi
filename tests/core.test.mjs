@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {parseCSL,rankCandidates,patchedCSL,makeZoteroScript,zoteroApply,csvReport,queryURL,cleanDOI,titleSimilarity} from '../core.mjs';
+import {parseCSL,rankCandidates,patchedCSL,makeZoteroScript,zoteroApply,csvReport,queryURL,cleanDOI,doiURL,titleSimilarity} from '../core.mjs';
 
 const original={id:'https://www.zotero.org/users/123/items/ABCD1234',type:'article-journal',title:'A careful study of cells and signals',author:[{family:'García',given:'Ana'}],issued:{'date-parts':[[2020]]},'container-title':'Cell Research',note:'Keep this note',DOI:''};
 const work={DOI:'10.1234/cells.001',title:[original.title],author:[{family:'Garcia',given:'Ana'}],issued:{'date-parts':[[2020]]},type:'journal-article','container-title':['Cell Research']};
@@ -10,6 +10,8 @@ const confirmed=()=>{const r=row();const ranked=rankCandidates(r,[work]);return 
 test('CSL export accepts BOM and singles; existing DOI is preserved, missing title is reported',()=>{
   const parsed=parseCSL('\uFEFF'+JSON.stringify([original,{...original,DOI:'https://doi.org/10.1000/existing'},{type:'book'}]));
   assert.deepEqual(parsed.map(r=>r.status),['ready','existing','invalid']);
+  const missingTitles=parseCSL(JSON.stringify([{type:'book',title:null},{type:'book',title:''}]));
+  assert.deepEqual(missingTitles.map(r=>({title:r.title,status:r.status})),[{title:'',status:'invalid'},{title:'',status:'invalid'}]);
   assert.equal(parseCSL(JSON.stringify(original)).length,1);
   assert.throws(()=>parseCSL('TY - JOUR'),/CSL JSON/);
   assert.throws(()=>parseCSL('[{}]'),/type/);
@@ -37,6 +39,17 @@ test('only confirmed empty DOI values are exported; other metadata and rows stay
   const url=new URL(queryURL(a,'a+tag@example.org'));assert.equal(url.searchParams.get('mailto'),'a+tag@example.org');assert.equal(url.searchParams.get('rows'),'5');assert.ok(!url.href.includes('Keep'));
   assert.equal(cleanDOI('https://doi.org/10.1000%2Fabc'),'10.1000/abc');
   assert.equal(cleanDOI('javascript:alert(1)'), '');
+});
+
+test('DOI links normalize supported inputs without changing imported metadata',()=>{
+  for(const value of ['10.1000/example',' DOI: 10.1000/example ','https://doi.org/10.1000/example','http://dx.doi.org/10.1000/example','https://doi.org/10.1000%2Fexample']){
+    const parsed=parseCSL(JSON.stringify({...original,DOI:value}));
+    assert.equal(doiURL(parsed[0].existing),'https://doi.org/10.1000/example');
+    assert.equal(parsed[0].status,'existing');
+    assert.equal(patchedCSL(parsed)[0].DOI,value);
+  }
+  assert.equal(doiURL('10.1000/part?version#section'),'https://doi.org/10.1000/part%3Fversion%23section');
+  for(const value of ['',null,'not-a-doi','https://example.org/10.1000/example','javascript:alert(1)']) assert.equal(doiURL(value),'');
 });
 
 function fakeItem(changes={}){

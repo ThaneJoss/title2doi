@@ -38,5 +38,6 @@ assert.match(robots, /Sitemap: https:\/\/title2doi\.thanejoss\.com\/sitemap\.xml
 const config = JSON.parse(await readFile(resolve(root, 'wrangler.jsonc'), 'utf8'));
 assert.equal(config.assets.directory, './dist');
 assert.equal(config.assets.not_found_handling, '404-page');
+assert.deepEqual(config.previews, {}, 'Static-only branch previews need an explicit empty previews block, without production bindings or routes');
 assert.deepEqual(config.routes, [{ pattern: 'title2doi.thanejoss.com', custom_domain: true }]);
-console.log(`Verified ${names.length} static files (${(totalBytes / 1024).toFixed(1)} KiB total), UI bindings, canonical domain, CSP, module entry, and 404 configuration.`);
+console.log(`Verified ${names.length} static files (${(totalBytes / 1024).toFixed(1)} KiB total), UI bindings, canonical domain, CSP, module entry, 404 configuration, and branch preview configuration.`);
