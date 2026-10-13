@@ -48,7 +48,7 @@ Workers Static Assets 与 Pages 都可以托管本项目，选择其中一种即
 
 `deploy:worker` 直接执行本地锁定版本的 `wrangler deploy`，由 `wrangler.jsonc` 统一定义静态资源目录、构建步骤和自定义域名。仓库根目录的 `wrangler.jsonc` 会被默认部署命令自动识别，并在部署前构建、校验 `dist/`。这是只托管静态资源的 Worker，无需额外编写后端脚本或配置数据库。
 
-**已有 Cloudflare 项目请检查 Settings → Build 中保存的部署命令**：改成 `npm run deploy:worker`，删除旧命令中的 `--assets .`、`--assets ./` 或 `--assets /opt/buildhome/repo`。根目录可以是仓库根目录，但静态资源目录必须是 `dist`。
+**已有 Cloudflare 项目请检查 Settings → Build 中保存的生产分支部署命令**：改成 `npm run deploy:worker`，删除旧命令中的 `--assets .`、`--assets ./` 或 `--assets /opt/buildhome/repo`。根目录可以是仓库根目录，但静态资源目录必须是 `dist`。
 
 配置中的 Custom Domain 为 `title2doi.thanejoss.com`。确保 `thanejoss.com` 在部署账户中，并授予正常部署所需的权限；Wrangler 会在部署时按配置绑定域名及证书。若该域名已有其他绑定，先在 Cloudflare 中处理冲突。
 
@@ -60,6 +60,14 @@ npm run build
 npx wrangler login
 npm run deploy:worker
 ```
+
+#### 非生产分支预览
+
+既有 Workers Builds Git 集成使用 `npx wrangler preview` 发布非生产分支预览，生产分支继续使用上面的 `npm run deploy:worker`。两个命令都直接读取 `wrangler.jsonc`，不需要自定义 API 部署或重试脚本。
+
+按照 [Wrangler 官方预览配置](https://developers.cloudflare.com/workers/previews/configuration/#wrangler-configuration-file)，本项目只有静态资源，因此显式配置空的 `"previews": {}`。`assets`、构建步骤与兼容日期保持顶层；生产自定义域名也保留原有顶层 `routes`，不放入 `previews`。预览地址取决于 Cloudflare 已有的 Preview URL 设置，不替换生产域名或生产流量；构建成功后仍需核对平台是否返回可访问的预览地址。若缺少此块，`wrangler preview` 会在上传前报错。
+
+`verify:dist` 会检查预览块存在且没有生产绑定或路由，防止配置缺失再次进入 PR；`check:worker` 是打包 dry run，不代表真实预览发布成功。分支预览结果仍以该提交的 Cloudflare `Workers Builds: title2doi` 检查与平台日志为准。
 
 ### 方式二：Cloudflare Pages
 
@@ -167,7 +175,7 @@ Crossref 可能不收录某些文献；未找到不代表文献一定没有 DOI�
 
 核心测试覆盖格式校验（含空标题）、DOI 链接规范化、匹配条件、原始元数据保留、预览不写入、确认后事务写入、保护已有 DOI、唯一条目对应、重复执行、生成脚本语法和 CSV 转义。
 
-`verify:dist` 检查静态文件白名单、单文件 25 MiB 限制、DOM 绑定、站点域名、Cloudflare 模块入口、Crossref CSP 放行及真实 404 配置。`check:worker` 直接执行 `wrangler deploy --dry-run`，自动构建并检查打包与配置，不发布或修改 DNS。dry run 不调用真实上传或域名配置接口，不能验证 Cloudflare 接口是否已经恢复。
+`verify:dist` 检查静态文件白名单、单文件 25 MiB 限制、DOM 绑定、站点域名、Cloudflare 模块入口、Crossref CSP 放行、真实 404 及空的分支预览配置。`check:worker` 直接执行 `wrangler deploy --dry-run`，自动构建并检查打包与配置，不发布或修改 DNS。dry run 不调用真实上传或域名配置接口，不能验证 Cloudflare 接口是否已经恢复。
 
 PR（包括 draft）与 main 推送都会执行 ESLint、核心单元测试、静态构建、产物验证、Worker dry run，以及桌面/移动端 Chromium 浏览器验收。浏览器测试覆盖导入、查询、暂停/继续、失败重试、确认与导出、刷新恢复、键盘焦点、弹窗无障碍、布局和真实 404；Crossref 完全使用固定响应，其他外部浏览器请求会被拒绝。测试不会操作真实 Zotero 或 Cloudflare 资源。截图、HTML 报告及失败 trace 保存在 Actions 的 `browser-report` artifact 中，保留 14 天。
 
