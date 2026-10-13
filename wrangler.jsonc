@@ -9,6 +9,7 @@
     "directory": "./dist",
     "not_found_handling": "404-page"
   },
+  "previews": {},
   "routes": [
     { "pattern": "title2doi.thanejoss.com", "custom_domain": true }
   ]
