@@ -1,48 +1,11 @@
-name: Quality checks
-
-on:
-  pull_request:
-  push:
-    branches: [main]
-
+name: CI
+'on':
+  push: {}
+  pull_request: {}
+  merge_group: {}
+  workflow_dispatch: {}
 permissions:
   contents: read
-
-concurrency:
-  group: quality-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
-  quality:
-    name: Lint, unit, build and browser checks
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    env:
-      WRANGLER_SEND_METRICS: 'false'
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-        with:
-          node-version-file: .node-version
-          cache: npm
-      - run: npm ci
-      - run: npm run lint
-      - run: npm test
-      - run: npm run build
-      - run: npm run verify:dist
-      - name: Check Worker packaging without deployment
-        run: npm run check:worker
-      - run: npx playwright install --with-deps chromium
-      - name: Browser flows and accessibility with mocked Crossref
-        run: npm run test:e2e
-      - name: Upload browser report and screenshots
-        if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: browser-report
-          path: |
-            playwright-report/
-            test-results/
-          retention-days: 14
+  ci:
+    uses: ThaneJoss/github-ci/.github/workflows/ci.yml@89624ba02d911171a634ddeb4848c298f3b1c842
