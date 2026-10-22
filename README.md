@@ -164,7 +164,7 @@ Crossref 可能不收录某些文献；未找到不代表文献一定没有 DOI�
 | `tests/core.test.mjs` | 核心逻辑及模拟 Zotero API 测试 |
 | `tests/e2e/`、`playwright.config.mjs` | 桌面/移动端 Chromium、模拟 Crossref、axe 与截图验收 |
 | `eslint.config.mjs` | 浏览器与 Node.js 模块的 JavaScript 检查 |
-| `.github/workflows/ci.yml` | PR 与 main 推送的自动质量检查 |
+| `.github/workflows/ci.yml` | 固定版本通用 CI 调用，自动发现标准检查 |
 | `scripts/build.mjs` | 生成可部署的静态目录 `dist/` |
 | `scripts/verify-dist.mjs` | 检查资源、页面绑定、域名、CSP 和 404 配置 |
 | `wrangler.jsonc` | 自动识别的 Workers Static Assets、构建与自定义域名配置 |
@@ -177,7 +177,9 @@ Crossref 可能不收录某些文献；未找到不代表文献一定没有 DOI�
 
 `verify:dist` 检查静态文件白名单、单文件 25 MiB 限制、DOM 绑定、站点域名、Cloudflare 模块入口、Crossref CSP 放行、真实 404 及空的分支预览配置。`check:worker` 直接执行 `wrangler deploy --dry-run`，自动构建并检查打包与配置，不发布或修改 DNS。dry run 不调用真实上传或域名配置接口，不能验证 Cloudflare 接口是否已经恢复。
 
-PR（包括 draft）与 main 推送都会执行 ESLint、核心单元测试、静态构建、产物验证、Worker dry run，以及桌面/移动端 Chromium 浏览器验收。浏览器测试覆盖导入、查询、暂停/继续、失败重试、确认与导出、刷新恢复、键盘焦点、弹窗无障碍、布局和真实 404；Crossref 完全使用固定响应，其他外部浏览器请求会被拒绝。测试不会操作真实 Zotero 或 Cloudflare 资源。截图、HTML 报告及失败 trace 保存在 Actions 的 `browser-report` artifact 中，保留 14 天。
+PR（包括 draft）、push、merge group 和手动运行调用固定版本 `ThaneJoss/github-ci/.github/workflows/ci.yml@89624ba02d911171a634ddeb4848c298f3b1c842`。通用 CI 按标准元数据发现 ESLint、核心单元测试和静态构建，并运行 JavaScript 语法检查与原生依赖审计；最终 Gate 要求选中的检查成功。此调用没有项目专属 job、inputs 或 secrets。
+
+产物验证、Worker dry run 和浏览器验收保留为上面的本地检查命令，不属于通用 CI 自动覆盖。浏览器测试覆盖导入、查询、暂停/继续、失败重试、确认与导出、刷新恢复、DOI 百分号字符、键盘焦点、弹窗无障碍、布局和真实 404；Crossref 完全使用固定响应，其他外部浏览器请求会被拒绝。测试不会操作真实 Zotero 或 Cloudflare 资源。截图、HTML 报告及失败 trace 保存在本地 `playwright-report/` 和 `test-results/`，不再由专属 workflow 上传。
 
 项目使用原生 JavaScript，没有独立 TypeScript 类型检查；ESLint 检查语法与变量使用，实际 DOM 绑定和交互由产物验证及浏览器测试覆盖。自动无障碍检查使用 axe，不能替代完整人工读屏验收。真实 Crossref 可用性和 Zotero 客户端写入不属于 CI；首次使用仍应先检查预览结果。
 

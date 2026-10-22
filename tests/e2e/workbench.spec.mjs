@@ -162,6 +162,29 @@ test('import, mocked query, confirmation, export, and restore retain original me
   expect(crossref.requests).toHaveLength(1);
 });
 
+test('percent characters survive imported DOI links, candidate review, and export', async ({page, crossref}) => {
+  const doi = '10.5555/part%2Fencoded%20value';
+  const url = 'https://doi.org/10.5555/part%252Fencoded%2520value';
+  const existing = {...existingPaper, DOI: url};
+  crossref.respond = () => responseFor(paper, doi);
+  await page.goto('/');
+  await importItems(page, [paper, existing]);
+  await expect(page.locator('[data-doi="1"]')).toHaveAttribute('href', url);
+  await page.getByRole('button', {name: '开始批量查询'}).click();
+  await expect(page.locator('#progress-text')).toHaveText('本批查询完成 · 1 条');
+  await expect(page.locator('[data-doi="0"]')).toHaveAttribute('href', url);
+  await page.locator('[data-review="0"]').click();
+  const dialog = page.getByRole('dialog', {name: '找到的是同一篇文献吗？'});
+  await expect(dialog.getByRole('link')).toHaveAttribute('href', url);
+  await dialog.getByRole('button', {name: '确认使用', exact: true}).click();
+  await page.getByRole('button', {name: '批量回填 Zotero', exact: true}).click();
+  await page.getByText('其他导出方式', {exact: true}).click();
+  const downloaded = page.waitForEvent('download');
+  await page.getByRole('button', {name: '下载 CSL JSON', exact: true}).click();
+  const download = await downloaded;
+  expect(JSON.parse(await readFile(await download.path(), 'utf8'))).toEqual([{...paper, DOI: doi}, existing]);
+});
+
 test('confirmation and candidate dialogs keep keyboard focus even when filters remove rows', async ({page, crossref}, testInfo) => {
   crossref.respond = url => url.searchParams.get('query.bibliographic').startsWith(paper.title)
     ? responseFor(paper)

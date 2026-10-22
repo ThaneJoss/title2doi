@@ -52,6 +52,32 @@ test('DOI links normalize supported inputs without changing imported metadata',(
   for(const value of ['',null,'not-a-doi','https://example.org/10.1000/example','javascript:alert(1)']) assert.equal(doiURL(value),'');
 });
 
+test('DOI normalization decodes resolver URLs once and preserves literal percent characters',()=>{
+  for(const suffix of ['a%20b','a%2Fb','a%25b','a%252Fb','100%','中文']){
+    const doi='10.1000/'+suffix;
+    const url='https://doi.org/10.1000/'+encodeURIComponent(suffix);
+    for(const value of [doi,'doi: '+doi,url,url.replace('https://doi.org/','http://dx.doi.org/')]){
+      assert.equal(cleanDOI(value),doi);
+      assert.equal(cleanDOI(cleanDOI(value)),doi);
+      assert.equal(doiURL(value),url);
+      const parsed=parseCSL(JSON.stringify({...original,DOI:value}));
+      assert.equal(patchedCSL(parsed)[0].DOI,value);
+    }
+  }
+  assert.equal(cleanDOI('https://doi.org/10.1000/a%2Fb'),'10.1000/a/b');
+  assert.equal(doiURL('https://doi.org/10.1000/a%2Fb'),'https://doi.org/10.1000/a/b');
+  assert.equal(cleanDOI('https://doi.org/10.1000/invalid%ZZ'),'');
+});
+
+test('ranked DOI candidates retain their identity in links and exported metadata',()=>{
+  for(const doi of ['10.1000/a%20b','10.1000/a%2Fb','10.1000/a%252Fb']){
+    const candidate=rankCandidates(row(),[{...work,DOI:doi}]).candidates[0];
+    assert.equal(candidate.doi,doi);
+    assert.equal(doiURL(candidate.doi),'https://doi.org/'+encodeURIComponent(doi).replace(/%2F/gi,'/'));
+    assert.equal(patchedCSL([{...row(),chosen:candidate,confirmed:true}])[0].DOI,doi);
+  }
+});
+
 function fakeItem(changes={}){
   const fields={title:original.title,date:'2020-02-01',DOI:'',extra:'',...changes.fields};
   const item={id:1,key:'ABCD1234',itemTypeID:22,isRegularItem:()=>true,getField:key=>fields[key]||'',getCreators:()=>[{lastName:'García',firstName:'Ana'}],setField:(key,value)=>{fields[key]=value;},save:async()=>{item.saved++;},saved:0,fields,...changes};

@@ -15,8 +15,13 @@ export const firstAuthor = (item) => plain(item.author?.[0]?.family || item.auth
 export const authorText = (item) => (item.author || []).slice(0, 3).map(a => plain(a.literal || [a.given, a.family].filter(Boolean).join(' '))).join(', ') + ((item.author?.length || 0) > 3 ? ' et al.' : '');
 
 export function cleanDOI(value) {
-  let doi = String(value || '').trim().replace(/^doi\s*:\s*/i, '').replace(/^https?:\/\/(?:dx\.)?doi\.org\//i, '');
-  try { doi = decodeURIComponent(doi); } catch {}
+  let doi = String(value || '').trim().replace(/^doi\s*:\s*/i, '');
+  const resolverPrefix = /^https?:\/\/(?:dx\.)?doi\.org\//i;
+  // Percent escapes belong to the resolver URL; a bare DOI can contain literal %.
+  if (resolverPrefix.test(doi)) {
+    try { doi = decodeURIComponent(doi.replace(resolverPrefix, '')); }
+    catch { return ''; }
+  }
   return /^10\.\d{4,9}\/[^\s]+$/i.test(doi) ? doi : '';
 }
 export function doiURL(value) {
