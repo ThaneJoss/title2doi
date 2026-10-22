@@ -38,9 +38,9 @@ function setInputTab(name){
   for(const kind of ['file','paste']){
     $(kind+'-tab').classList.toggle('selected',kind===name);
     $(kind+'-tab').setAttribute('aria-selected',String(kind===name));
+    $(kind+'-tab').tabIndex=kind===name?0:-1;
     $(kind+'-panel').hidden=kind!==name;
   }
-  if(name==='paste') $('paste-input').focus();
 }
 
 function importText(text,name){
@@ -70,7 +70,15 @@ function visibleRows(){
   });
 }
 
+function focusResultControl(attribute,index){
+  const control=$('result-rows').querySelector(`[${attribute}="${index}"]:not(:disabled)`);
+  (control||$('filters').querySelector('[aria-pressed="true"]')).focus({preventScroll:true});
+}
+
 function render(){
+  const focused=document.activeElement;
+  const focusAttribute=$('result-rows').contains(focused)?['data-confirm','data-review','data-retry','data-doi'].find(attribute=>focused.hasAttribute(attribute)):null;
+  const focusIndex=focusAttribute?focused.getAttribute(focusAttribute):null;
   const confirmed=confirmedRows(rows), high=rows.filter(r=>r.status==='high'&&!r.confirmed).length, review=rows.filter(r=>r.status==='review'&&!r.confirmed).length;
   $('stat-total').textContent=rows.length;$('stat-missing').textContent=rows.filter(r=>!r.existing).length;$('stat-high').textContent=high;$('stat-review').textContent=review;
   $('nav-count').textContent=rows.length;$('result-count').textContent=rows.length+' 条文献';$('confirmed-count').textContent=confirmed.length;
@@ -92,17 +100,20 @@ function render(){
   const current=filtered.slice((page-1)*PAGE_SIZE,page*PAGE_SIZE);
   $('result-rows').innerHTML=current.map(row=>{
     const candidate=row.chosen||row.candidates[0],doi=row.existing||candidate?.doi;
+    const doiHref=doiURL(doi);
+    const doiMarkup=doiHref?`<a class="doi-link" data-doi="${row.index}" href="${esc(doiHref)}" target="_blank" rel="noopener noreferrer">${esc(doi)}</a>`:`<span class="doi-link">${esc(doi||'')}</span>`;
     const status=row.confirmed?'confirmed':row.status;
     const selectable=!!row.chosen&&!row.existing;
     const details=[authorText(row.raw),row.year,row.raw['container-title']].filter(Boolean).map(esc).join(' · ');
     const action=['high','review'].includes(row.status)||row.candidates.length?`<button class="table-action" data-review="${row.index}">核对</button>`:row.status==='error'?`<button class="table-action" data-retry="${row.index}" ${active?'disabled':''}>重试</button>`:'<span class="missing-text">—</span>';
-    return `<tr><td><input type="checkbox" data-confirm="${row.index}" aria-label="确认匹配：${esc(row.title)}" ${row.confirmed?'checked':''} ${selectable?'':'disabled'} title="${selectable?'勾选后包含在批量回填中':'请先核对并选择候选'}"></td><td><div class="paper-title">${esc(row.title||'（缺少标题）')}</div><div class="paper-meta">${details||'无作者或年份信息'}</div>${row.status==='invalid'?'<div class="error-text">请补充标题后重新导出</div>':''}</td><td><span class="tag ${status}">${row.status==='querying'?'<span class="spinner"></span>':''}${row.confirmed?icon('check'):''}${row.confirmed?'已确认':statusNames[row.status]}</span>${candidate&&!row.existing?`<span class="score-text">匹配分数 ${candidate.score} / 100</span>`:''}</td><td>${doi?`<a class="doi-link" href="${esc(doiURL(doi))}" target="_blank" rel="noopener noreferrer">${esc(doi)}</a>${!row.confirmed&&!row.existing?'<span class="score-text">候选 · 核对后确认</span>':''}`:`<span class="missing-text">${row.status==='none'?'暂无匹配 DOI':row.status==='querying'?'正在检索…':'—'}</span>`}${row.status==='error'?`<div class="error-text">${esc(row.error)}</div>`:''}</td><td>${action}</td></tr>`;
+    return `<tr><td><input type="checkbox" data-confirm="${row.index}" aria-label="确认匹配：${esc(row.title)}" ${row.confirmed?'checked':''} ${selectable?'':'disabled'} title="${selectable?'勾选后包含在批量回填中':'请先核对并选择候选'}"></td><td><div class="paper-title">${esc(row.title||'（缺少标题）')}</div><div class="paper-meta">${details||'无作者或年份信息'}</div>${row.status==='invalid'?'<div class="error-text">请补充标题后重新导出</div>':''}</td><td><span class="tag ${status}">${row.status==='querying'?'<span class="spinner"></span>':''}${row.confirmed?icon('check'):''}${row.confirmed?'已确认':statusNames[row.status]}</span>${candidate&&!row.existing?`<span class="score-text">匹配分数 ${candidate.score} / 100</span>`:''}</td><td>${doi?`${doiMarkup}${!row.confirmed&&!row.existing?'<span class="score-text">候选 · 核对后确认</span>':''}`:`<span class="missing-text">${row.status==='none'?'暂无匹配 DOI':row.status==='querying'?'正在检索…':'—'}</span>`}${row.status==='error'?`<div class="error-text">${esc(row.error)}</div>`:''}</td><td>${action}</td></tr>`;
   }).join('');
   $('empty-state').hidden=!!filtered.length;
   if(!filtered.length){$('empty-state').querySelector('h3').textContent=rows.length?'当前筛选下没有文献':'下一篇被找到的，就是你的文献';$('empty-state').querySelector('p').textContent=rows.length?'切换筛选条件，或尝试其他关键词。':'先导入 CSL JSON 文件，匹配结果会显示在这里。';}
   $('table-footer').hidden=!filtered.length;
   $('page-info').textContent=`${(page-1)*PAGE_SIZE+1}–${Math.min(page*PAGE_SIZE,filtered.length)} / ${filtered.length} 条 · 第 ${page} / ${pages} 页`;
   $('previous-page').disabled=page<=1;$('next-page').disabled=page>=pages;
+  if(focusAttribute) focusResultControl(focusAttribute,focusIndex);
 }
 
 function showProgress(message){
@@ -132,7 +143,7 @@ async function crossref(row,email,signal){
       if(response.ok) data=await response.json();
     }catch(error){
       if(signal.aborted) throw abortError();
-      if(attempt===2) throw new Error(timedOut?'请求超时，请重试':'无法连接 Crossref，请检查网络后重试');
+      if(attempt===2) throw new Error(timedOut?'请求超时，请重试':'无法连接 Crossref，请检查网络后重试',{cause:error});
       showProgress(`连接暂时失败，正在等待后重试（${attempt+1}/2）…`);
       await delay(2000*(attempt+1),signal);continue;
     }finally{clearTimeout(timer);signal.removeEventListener('abort',cancel);}
@@ -154,7 +165,7 @@ async function crossref(row,email,signal){
 async function startQuery(onlyIndex=null){
   if(active) return;
   const email=$('email').value.trim();
-  if(email&&!$('email').checkValidity()){$('settings-panel').hidden=false;$('email').reportValidity();return;}
+  if(email&&!$('email').checkValidity()){$('settings-panel').hidden=false;$('settings-button').setAttribute('aria-expanded','true');$('email').reportValidity();return;}
   const queue=rows.filter(row=>onlyIndex===null?['ready','error'].includes(row.status):row.index===onlyIndex&&row.status==='error');
   if(!queue.length) return;
   active=true;controller=new AbortController();runTotal=queue.length;runDone=0;notice('');render();
@@ -222,7 +233,12 @@ const report=()=>download('doi-review.csv',csvReport(rows),'text/csv;charset=utf
 
 $('file-tab').addEventListener('click',()=>setInputTab('file'));
 $('paste-tab').addEventListener('click',()=>setInputTab('paste'));
-document.querySelector('.input-tabs').addEventListener('keydown',event=>{if(event.key==='ArrowLeft'||event.key==='ArrowRight'){event.preventDefault();const to=$('file-tab').getAttribute('aria-selected')==='true'?'paste':'file';setInputTab(to);$(to+'-tab').focus();}});
+document.querySelector('.input-tabs').addEventListener('keydown',event=>{
+  if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key)) return;
+  event.preventDefault();
+  const to=event.key==='Home'?'file':event.key==='End'?'paste':$('file-tab').getAttribute('aria-selected')==='true'?'paste':'file';
+  setInputTab(to);$(to+'-tab').focus();
+});
 $('dropzone').addEventListener('click',()=>$('file-input').click());
 $('file-input').addEventListener('change',event=>readFile(event.target.files[0]));
 for(const type of ['dragenter','dragover']) $('dropzone').addEventListener(type,event=>{event.preventDefault();if(!active)$('dropzone').classList.add('dragover');});
@@ -246,6 +262,7 @@ $('result-rows').addEventListener('change',event=>{const input=event.target.clos
 $('result-rows').addEventListener('click',event=>{const review=event.target.closest('[data-review]'),retry=event.target.closest('[data-retry]');if(review)openCandidates(Number(review.dataset.review));if(retry)startQuery(Number(retry.dataset.retry));});
 $('candidate-list').addEventListener('click',event=>{const button=event.target.closest('[data-choose]');if(!button)return;const row=rows[candidateIndex];row.chosen=row.candidates[Number(button.dataset.choose)];row.confirmed=true;persist();render();$('candidate-dialog').close();toast('已确认，该文献将包含在批量回填中。');});
 $('reject-candidates').addEventListener('click',()=>{const row=rows[candidateIndex];row.chosen=null;row.confirmed=false;row.status='none';persist();render();$('candidate-dialog').close();toast('已排除，回填时会跳过此文献。');});
+$('candidate-dialog').addEventListener('close',()=>{if(!$('candidate-dialog').open&&candidateIndex!==null)focusResultControl('data-review',candidateIndex);});
 $('confirm-high').addEventListener('click',()=>{const candidates=rows.filter(r=>r.status==='high'&&!r.confirmed);if(!candidates.length)return;if(!confirm(`确认采用 ${candidates.length} 条高匹配候选？\n\n这些记录的标题、第一作者、年份和文献类型通过了比对，但仍可能存在版本差异。确认后将包含在回填脚本中。`))return;candidates.forEach(r=>r.confirmed=true);persist();render();toast(`已整批确认 ${candidates.length} 条结果。`);});
 $('export-button').addEventListener('click',openExport);
 for(const [id,apply] of [['copy-preview',false],['copy-apply',true]])$(id).addEventListener('click',()=>{setScript(apply);copy($('script-output').value,$(id));});

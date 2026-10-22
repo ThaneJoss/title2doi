@@ -15,11 +15,19 @@ export const firstAuthor = (item) => plain(item.author?.[0]?.family || item.auth
 export const authorText = (item) => (item.author || []).slice(0, 3).map(a => plain(a.literal || [a.given, a.family].filter(Boolean).join(' '))).join(', ') + ((item.author?.length || 0) > 3 ? ' et al.' : '');
 
 export function cleanDOI(value) {
-  let doi = String(value || '').trim().replace(/^doi\s*:\s*/i, '').replace(/^https?:\/\/(?:dx\.)?doi\.org\//i, '');
-  try { doi = decodeURIComponent(doi); } catch {}
+  let doi = String(value || '').trim().replace(/^doi\s*:\s*/i, '');
+  const resolverPrefix = /^https?:\/\/(?:dx\.)?doi\.org\//i;
+  // Percent escapes belong to the resolver URL; a bare DOI can contain literal %.
+  if (resolverPrefix.test(doi)) {
+    try { doi = decodeURIComponent(doi.replace(resolverPrefix, '')); }
+    catch { return ''; }
+  }
   return /^10\.\d{4,9}\/[^\s]+$/i.test(doi) ? doi : '';
 }
-export const doiURL = doi => 'https://doi.org/' + encodeURIComponent(doi).replace(/%2F/gi, '/');
+export function doiURL(value) {
+  const doi = cleanDOI(value);
+  return doi ? 'https://doi.org/' + encodeURIComponent(doi).replace(/%2F/gi, '/') : '';
+}
 
 export function parseCSL(text) {
   if (new TextEncoder().encode(text).length > 15 * 1024 * 1024) throw new Error('文件超过 15 MB。请分批导出文献。');
@@ -36,7 +44,7 @@ export function parseCSL(text) {
     if (item.author != null && (!Array.isArray(item.author) || item.author.some(a => !a || typeof a !== 'object'))) throw new Error(`第 ${i + 1} 条 author 格式不正确。`);
     if (item.DOI != null && typeof item.DOI !== 'string') throw new Error(`第 ${i + 1} 条 DOI 应为文本。`);
   }
-  return items.map((raw, index) => ({index, raw, title:plain(raw.title || ''), year:yearOf(raw.issued), author:firstAuthor(raw), existing:String(raw.DOI || '').trim(), status:raw.DOI?.trim() ? 'existing' : norm(raw.title).length < 4 ? 'invalid' : 'ready', candidates:[], chosen:null, confirmed:false, error:''}));
+  return items.map((raw, index) => ({index, raw, title:plain(raw.title || ''), year:yearOf(raw.issued), author:firstAuthor(raw), existing:String(raw.DOI || '').trim(), status:raw.DOI?.trim() ? 'existing' : norm(raw.title || '').length < 4 ? 'invalid' : 'ready', candidates:[], chosen:null, confirmed:false, error:''}));
 }
 
 function dice(a, b) {
