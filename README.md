@@ -177,7 +177,7 @@ Crossref 可能不收录某些文献；未找到不代表文献一定没有 DOI�
 
 `verify:dist` 检查静态文件白名单、单文件 25 MiB 限制、DOM 绑定、站点域名、Cloudflare 模块入口、Crossref CSP 放行、真实 404 及空的分支预览配置。`check:worker` 直接执行 `wrangler deploy --dry-run`，自动构建并检查打包与配置，不发布或修改 DNS。dry run 不调用真实上传或域名配置接口，不能验证 Cloudflare 接口是否已经恢复。
 
-PR（包括 draft）、push、merge group 和手动运行调用固定版本 `ThaneJoss/github-ci/.github/workflows/ci.yml@89624ba02d911171a634ddeb4848c298f3b1c842`。通用 CI 按标准元数据发现 ESLint、核心单元测试和静态构建，并运行 JavaScript 语法检查与原生依赖审计；最终 Gate 要求选中的检查成功。此调用没有项目专属 job、inputs 或 secrets。
+PR（包括 draft）、push、merge group 和手动运行调用自动跟随 `main` 的通用模板 `ThaneJoss/github-ci/.github/workflows/ci.yml@main`。通用 CI 按标准元数据发现 ESLint、核心单元测试和静态构建，并运行 JavaScript 语法检查与原生依赖审计；最终 Gate 要求选中的检查成功。此调用没有项目专属 job、inputs 或 secrets。
 
 产物验证、Worker dry run 和浏览器验收保留为上面的本地检查命令，不属于通用 CI 自动覆盖。浏览器测试覆盖导入、查询、暂停/继续、失败重试、确认与导出、刷新恢复、DOI 百分号字符、键盘焦点、弹窗无障碍、布局和真实 404；Crossref 完全使用固定响应，其他外部浏览器请求会被拒绝。测试不会操作真实 Zotero 或 Cloudflare 资源。截图、HTML 报告及失败 trace 保存在本地 `playwright-report/` 和 `test-results/`，不再由专属 workflow 上传。
 
