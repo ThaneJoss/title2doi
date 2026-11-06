@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {parseCSL,rankCandidates,patchedCSL,makeZoteroScript,zoteroApply,csvReport,queryURL,cleanDOI,doiURL,titleSimilarity} from '../core.mjs';
+import {parseCSL,rankCandidates,patchedCSL,makeZoteroScript,zoteroApply,csvReport,queryURL,cleanDOI,doiURL,titleSimilarity,plain,norm} from '../core.mjs';
 
 const original={id:'https://www.zotero.org/users/123/items/ABCD1234',type:'article-journal',title:'A careful study of cells and signals',author:[{family:'García',given:'Ana'}],issued:{'date-parts':[[2020]]},'container-title':'Cell Research',note:'Keep this note',DOI:''};
 const work={DOI:'10.1234/cells.001',title:[original.title],author:[{family:'Garcia',given:'Ana'}],issued:{'date-parts':[[2020]]},type:'journal-article','container-title':['Cell Research']};
@@ -127,4 +127,69 @@ test('copied JavaScript compiles and runs as an asynchronous Zotero script',asyn
 test('CSV escapes quotes, preserves line breaks and neutralizes formula prefixes',()=>{
   const a=confirmed();a.title='=HYPERLINK("bad")\nnew line';const csv=csvReport([a]);
   assert.ok(csv.startsWith('\uFEFF'));assert.ok(csv.includes('"\'=HYPERLINK(""bad"")\nnew line"'));assert.ok(csv.includes('10.1234/cells.001'));
+});
+
+test('scientific comparisons and literal entities survive title parsing',()=>{
+  const title='Association of mortality with HbA1c < 7% and age > 65 years';
+  for(const source of [title,title.replace('<','&lt;').replace('>','&#62;')]){
+    const parsed=parseCSL(JSON.stringify({...original,title:source}))[0];
+    assert.equal(parsed.title,title);
+    const query=new URL(queryURL(parsed)).searchParams.get('query.bibliographic');
+    assert.ok(query.includes('< 7% and age > 65'));
+    assert.equal(patchedCSL([parsed])[0].title,source);
+  }
+  assert.equal(plain('<i>Effect</i> of H<sub>2</sub>O at x<sup>2</sup> in <span class="nocase">NaCl</span>'),'Effect of H2O at x2 in NaCl');
+  assert.equal(plain('A < unknown > B'),'A < unknown > B');
+  assert.equal(plain('A <i < 7 > B'),'A <i < 7 > B');
+  assert.equal(plain('Literal &lt;i&gt;word&lt;/i&gt; &amp;lt;7'),'Literal <i>word</i> &lt;7');
+  assert.equal(norm(plain('Literal &lt;i&gt;word&lt;/i&gt; &amp;lt;7')),'literal i word i lt 7');
+});
+
+test('title numbers and comparison directions require manual review even at high similarity',()=>{
+  const title='Longitudinal multicentre analysis of metabolic health and clinical outcomes in a large population cohort: Association of mortality with HbA1c < 7% and age > 65 years';
+  const parsed=parseCSL(JSON.stringify({...original,title}))[0];
+  assert.equal(rankCandidates(parsed,[{...work,title:[title]}]).high,true);
+  for(const different of [title.replace('7%','9%'),title.replace('< 7','> 7'),title.replace('< 7','< -7')]){
+    const ranked=rankCandidates(parsed,[{...work,title:[different]}]);
+    assert.equal(ranked.candidates.length,1);
+    assert.ok(ranked.candidates[0].titleScore>=0.96);
+    assert.equal(ranked.high,false);
+    assert.ok(ranked.candidates[0].reasons.includes('标题中的数字或比较符不同'));
+  }
+  const literal=parseCSL(JSON.stringify({...original,title:'A study of literal &lt;i&gt;word&lt;/i&gt; in scientific titles'}))[0];
+  const ranked=rankCandidates(literal,[{...work,title:['A study of literal <i>word</i> in scientific titles']}]);
+  assert.ok(ranked.candidates[0].titleScore<1);
+});
+
+test('Zotero exact title checks retain thresholds and comparison directions',async()=>{
+  const title='Association of mortality with HbA1c < 7% and age > 65 years';
+  for(const key of ['', 'ABCD1234']){
+    for(const selected of [title.replace('7%','9%'),title.replace('< 7','> 7'),title.replace('< 7','< -7')]){
+      const item=fakeItem({fields:{...fakeItem().fields,title:selected}}),Z=mockZotero([item]);
+      const report=await zoteroApply([{...payload()[0],title,key}],true,Z,()=>{throw Error('different title must not confirm');});
+      assert.match(report,/可补全 0/);
+      assert.equal(item.saved,0);
+      assert.equal(Z.transactionCount,0);
+    }
+  }
+});
+
+test('copied scripts share title parsing for comparisons, formatting, and entities',async()=>{
+  const AsyncFunction=Object.getPrototypeOf(async function(){}).constructor;
+  const title='Association of mortality with HbA1c < 7% and age > 65 years';
+  for(const [source,selected,count] of [
+    [title.replace('<','&lt;').replace('>','&#62;'),title,1],
+    [title,title.replace('7%','9%'),0],
+    [title,title.replace('< 7','> 7'),0],
+    ['<i>Effect</i> of H<sub>2</sub>O in scientific research','Effect of H2O in scientific research',1],
+    ['Literal &lt;i&gt;word&lt;/i&gt; in scientific research','Literal <i>word</i> in scientific research',0],
+  ]){
+    const r=parseCSL(JSON.stringify({...original,id:'without-key',title:source}))[0];
+    r.chosen={doi:work.DOI};r.confirmed=true;
+    const item=fakeItem({fields:{...fakeItem().fields,title:selected}}),Z=mockZotero([item]);
+    const run=new AsyncFunction('Zotero','confirm',makeZoteroScript([r],false));
+    assert.match(await run(Z,()=>{throw Error('preview must not confirm');}),new RegExp('可补全 '+count));
+    assert.equal(item.saved,0);
+    assert.equal(Z.transactionCount,0);
+  }
 });

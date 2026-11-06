@@ -1,37 +1,69 @@
 import {parseCSL,rankCandidates,queryURL,confirmedRows,patchedCSL,csvReport,makeZoteroScript,escapeHTML as esc,doiURL,authorText,norm} from './core.mjs';
+import {createSessionStore} from './session.mjs';
 
 const $=id=>document.getElementById(id);
 const icon=name=>`<svg aria-hidden="true"><use href="#i-${name}"/></svg>`;
-const STORE_KEY='doi-desk-session-v1';
+const sessions=createSessionStore();
 const PAGE_SIZE=25;
 let rows=[], sourceName='', active=false, controller=null, filter='all', page=1, candidateIndex=null, currentScriptMode=false;
-let toastTimer, storageWarned=false, runTotal=0, runDone=0;
+let toastTimer, runTotal=0, runDone=0;
+let initializing=true, clearing=false, pendingSaves=0, saveRevision=0, storageFailed=false;
 const cache=new Map();
 const statusNames={ready:'待查询',querying:'查询中',existing:'已有 DOI',invalid:'缺少标题',high:'高匹配',review:'待核对',none:'未找到',error:'查询失败'};
 
 function toast(message,error=false){clearTimeout(toastTimer);$('toast').textContent=message;$('toast').classList.toggle('error',error);$('toast').hidden=false;toastTimer=setTimeout(()=>$('toast').hidden=true,4200);}
 function notice(message,error=false){$('notice').textContent=message;$('notice').classList.toggle('error',error);$('notice').hidden=!message;}
-function persist(){
-  try{localStorage.setItem(STORE_KEY,JSON.stringify({version:1,sourceName,items:rows.map(row=>({raw:row.raw,status:row.status,candidates:row.candidates,chosen:row.chosen,confirmed:row.confirmed,error:row.error}))}));$('storage-status').textContent='进度自动保存在此浏览器';}
-  catch { $('storage-status').textContent='本地存储不可用，请及时导出核对表';if(!storageWarned){storageWarned=true;toast('浏览器无法保存进度，请保持页面打开并及时导出核对表。',true);} }
+function storageFailure(message){
+  storageFailed=true;
+  $('storage-status').textContent='当前进度未保存';
+  $('storage-warning').textContent=message;
+  $('storage-warning').hidden=false;
 }
-function restore(){
+function storageSuccess(){
+  storageFailed=false;
+  $('storage-status').textContent='进度已保存在此浏览器';
+  $('storage-warning').hidden=true;
+}
+function persist(){
+  if(clearing) return Promise.resolve(false);
+  const revision=++saveRevision;
+  const snapshot={version:2,sourceName,items:rows.map(row=>({raw:row.raw,status:row.status,candidates:row.candidates,chosen:row.chosen,confirmed:row.confirmed,error:row.error}))};
+  pendingSaves++;$('storage-status').textContent='正在保存进度…';
+  return sessions.save(snapshot).then(()=>{
+    if(revision===saveRevision) storageSuccess();
+    return true;
+  }).catch(()=>{
+    if(revision===saveRevision) storageFailure('浏览器未能保存当前进度。请保持页面打开，导出核对表；已确认的结果也可下载为 CSL JSON。');
+    return false;
+  }).finally(()=>{pendingSaves--;});
+}
+async function restore(){
   try{
-    const saved=JSON.parse(localStorage.getItem(STORE_KEY)||'null');
-    if(!saved || saved.version!==1 || !Array.isArray(saved.items) || !saved.items.length) return;
-    rows=parseCSL(JSON.stringify(saved.items.map(x=>x.raw)));
-    rows.forEach((row,i)=>{
+    const result=await sessions.load(),saved=result.snapshot;
+    if(result.incomplete){
+      storageFailure('上次保存未完成，旧快照可能不包含最新核对结果，因此没有自动恢复。请重新导入文献，或查阅已导出的核对表。');
+      return;
+    }
+    if(!saved){$('storage-status').textContent='导入后自动保存进度';return;}
+    if(![1,2].includes(saved.version) || !Array.isArray(saved.items) || !saved.items.length) throw new Error('无效的保存记录');
+    const restored=parseCSL(JSON.stringify(saved.items.map(x=>x.raw)));
+    let recheck=0;
+    restored.forEach((row,i)=>{
       const previous=saved.items[i];
       if(row.status==='existing'||row.status==='invalid') return;
+      // v1 cached titles may have lost comparison conditions. Query them again.
+      if(saved.version===1 && /[<>]/.test(row.title)){recheck++;return;}
       if(['high','review','none','error','ready'].includes(previous.status)) row.status=previous.status;
       row.candidates=Array.isArray(previous.candidates)?previous.candidates:[];
       row.chosen=previous.chosen&&row.candidates.find(c=>c.doi===previous.chosen.doi)||null;
       row.confirmed=!!previous.confirmed&&!!row.chosen;
       row.error=String(previous.error||'');
     });
-    sourceName=String(saved.sourceName||'上次导入');
-    notice(`已恢复上次的 ${rows.length} 条文献及核对进度，可继续查询或批量回填。`);
-  }catch{notice('上次的本地记录无法恢复，请重新导入 CSL JSON。',true);}
+    rows=restored;sourceName=String(saved.sourceName||'上次导入');
+    notice(`已恢复上次的 ${rows.length} 条文献及核对进度，可继续查询或批量回填。${recheck?`${recheck} 条含比较式的旧结果需重新查询和确认。`:''}`);
+    if(result.legacy||saved.version===1) await persist();
+    else storageSuccess();
+  }catch{storageFailure('无法读取上次保存的进度。请保持已有窗口打开并导出结果，或重新导入 CSL JSON。');}
 }
 
 function setInputTab(name){
@@ -44,7 +76,7 @@ function setInputTab(name){
 }
 
 function importText(text,name){
-  if(active) return toast('请先暂停查询，再导入新文献。',true);
+  if(active||initializing||clearing) return toast('请等待进度读取完成，并暂停查询后再导入。',true);
   let parsed;
   try{parsed=parseCSL(text);}catch(e){notice(e.message,true);return;}
   if(rows.length && !confirm('导入新文件会替换当前工作台中的文献与核对进度。需要保留结果时，请先导出核对表。继续导入？')) return;
@@ -82,14 +114,14 @@ function render(){
   const confirmed=confirmedRows(rows), high=rows.filter(r=>r.status==='high'&&!r.confirmed).length, review=rows.filter(r=>r.status==='review'&&!r.confirmed).length;
   $('stat-total').textContent=rows.length;$('stat-missing').textContent=rows.filter(r=>!r.existing).length;$('stat-high').textContent=high;$('stat-review').textContent=review;
   $('nav-count').textContent=rows.length;$('result-count').textContent=rows.length+' 条文献';$('confirmed-count').textContent=confirmed.length;
-  $('confirm-high').disabled=!high;$('export-button').disabled=!confirmed.length;
-  $('download-report').disabled=!rows.length;$('clear-button').disabled=active||!rows.length;
+  $('confirm-high').disabled=!high||clearing||initializing;$('export-button').disabled=!confirmed.length;
+  $('download-report').disabled=!rows.length;$('clear-button').disabled=active||initializing||clearing||(!rows.length&&!storageFailed);
   $('start-button').hidden=active;$('pause-button').hidden=!active;
   const ready=rows.filter(r=>r.status==='ready').length, failed=rows.filter(r=>r.status==='error').length;
-  $('start-button').disabled=(!ready&&!failed)||active;
+  $('start-button').disabled=(!ready&&!failed)||active||initializing||clearing;
   $('start-button').querySelector('span').textContent=ready?(rows.some(r=>['high','review','none'].includes(r.status))?'继续批量查询':'开始批量查询'):failed?'重试失败条目':'查询已完成';
   if(!rows.length) $('start-button').querySelector('span').textContent='开始批量查询';
-  for(const id of ['sample-button','dropzone','parse-paste','email','file-input']) $(id).disabled=active;
+  for(const id of ['sample-button','dropzone','parse-paste','email','file-input']) $(id).disabled=active||initializing||clearing;
   $('import-info').textContent=sourceName?`${sourceName} · ${rows.length} 条`:'还没有准备好文件？';
   $('import-info').title=sourceName;
   $('step-import').classList.toggle('current',!rows.length);
@@ -103,9 +135,9 @@ function render(){
     const doiHref=doiURL(doi);
     const doiMarkup=doiHref?`<a class="doi-link" data-doi="${row.index}" href="${esc(doiHref)}" target="_blank" rel="noopener noreferrer">${esc(doi)}</a>`:`<span class="doi-link">${esc(doi||'')}</span>`;
     const status=row.confirmed?'confirmed':row.status;
-    const selectable=!!row.chosen&&!row.existing;
+    const selectable=!!row.chosen&&!row.existing&&!clearing;
     const details=[authorText(row.raw),row.year,row.raw['container-title']].filter(Boolean).map(esc).join(' · ');
-    const action=['high','review'].includes(row.status)||row.candidates.length?`<button class="table-action" data-review="${row.index}">核对</button>`:row.status==='error'?`<button class="table-action" data-retry="${row.index}" ${active?'disabled':''}>重试</button>`:'<span class="missing-text">—</span>';
+    const action=['high','review'].includes(row.status)||row.candidates.length?`<button class="table-action" data-review="${row.index}" ${clearing?'disabled':''}>核对</button>`:row.status==='error'?`<button class="table-action" data-retry="${row.index}" ${active?'disabled':''}>重试</button>`:'<span class="missing-text">—</span>';
     return `<tr><td><input type="checkbox" data-confirm="${row.index}" aria-label="确认匹配：${esc(row.title)}" ${row.confirmed?'checked':''} ${selectable?'':'disabled'} title="${selectable?'勾选后包含在批量回填中':'请先核对并选择候选'}"></td><td><div class="paper-title">${esc(row.title||'（缺少标题）')}</div><div class="paper-meta">${details||'无作者或年份信息'}</div>${row.status==='invalid'?'<div class="error-text">请补充标题后重新导出</div>':''}</td><td><span class="tag ${status}">${row.status==='querying'?'<span class="spinner"></span>':''}${row.confirmed?icon('check'):''}${row.confirmed?'已确认':statusNames[row.status]}</span>${candidate&&!row.existing?`<span class="score-text">匹配分数 ${candidate.score} / 100</span>`:''}</td><td>${doi?`${doiMarkup}${!row.confirmed&&!row.existing?'<span class="score-text">候选 · 核对后确认</span>':''}`:`<span class="missing-text">${row.status==='none'?'暂无匹配 DOI':row.status==='querying'?'正在检索…':'—'}</span>`}${row.status==='error'?`<div class="error-text">${esc(row.error)}</div>`:''}</td><td>${action}</td></tr>`;
   }).join('');
   $('empty-state').hidden=!!filtered.length;
@@ -163,7 +195,7 @@ async function crossref(row,email,signal){
 }
 
 async function startQuery(onlyIndex=null){
-  if(active) return;
+  if(active||initializing||clearing) return;
   const email=$('email').value.trim();
   if(email&&!$('email').checkValidity()){$('settings-panel').hidden=false;$('settings-button').setAttribute('aria-expanded','true');$('email').reportValidity();return;}
   const queue=rows.filter(row=>onlyIndex===null?['ready','error'].includes(row.status):row.index===onlyIndex&&row.status==='error');
@@ -195,11 +227,12 @@ async function startQuery(onlyIndex=null){
     showProgress(paused?`已暂停 · 保留已完成的 ${runDone} 条查询`:`本批查询完成 · ${runDone} 条`);
     if(pausedByError) notice('连续 3 条查询失败，已自动暂停。请检查到 api.crossref.org 的网络连接后继续；失败条目可重试。',true);
     else if(!paused) notice(`查询完成。${rows.filter(r=>r.status==='high'&&!r.confirmed).length} 条高匹配可整批确认，${rows.filter(r=>r.status==='review'&&!r.confirmed).length} 条需要核对。${rows.some(r=>r.status==='error')?'存在查询失败的条目，可点击重试。':''}`);
-    toast(paused?'已暂停，进度已保留。':'查询完成，请核对并确认结果。');
+    toast(paused?'已暂停，已完成结果仍在工作台。':'查询完成，请核对并确认结果。');
   }
 }
 
 function openCandidates(index){
+  if(clearing||initializing) return;
   const row=rows[index];if(!row) return;candidateIndex=index;
   $('candidate-original').innerHTML=`<div class="small-label">ZOTERO 原文献</div><h3>${esc(row.title)}</h3><p>${esc(authorText(row.raw)||'作者缺失')} · ${esc(row.year||'年份缺失')}${row.raw['container-title']?' · '+esc(row.raw['container-title']):''}</p>`;
   $('candidate-list').innerHTML=row.candidates.map((candidate,i)=>`<article class="candidate-card ${row.confirmed&&row.chosen?.doi===candidate.doi?'chosen':''}"><div class="candidate-card-top"><h3>${esc(candidate.title)}</h3><div class="match-score">${candidate.score}<small> / 100</small></div></div><p class="candidate-meta">${esc(candidate.authors||'作者未提供')} · ${esc(candidate.year||'年份未提供')}<br>${esc(candidate.journal||'来源未提供')} · ${esc(candidate.type)}</p><div class="candidate-evidence">${candidate.reasons.map(reason=>`<span class="${/不同|相差/.test(reason)?'conflict':''}">${esc(reason)}</span>`).join('')}</div><div class="candidate-bottom"><a class="doi-link" href="${esc(doiURL(candidate.doi))}" target="_blank" rel="noopener noreferrer">${esc(candidate.doi)} ↗</a><button class="button small ${row.chosen?.doi===candidate.doi&&row.confirmed?'secondary':''}" data-choose="${i}">${row.chosen?.doi===candidate.doi&&row.confirmed?'已确认使用':'确认使用'}</button></div></article>`).join('');
@@ -260,8 +293,8 @@ $('search').addEventListener('input',()=>{page=1;render();});
 $('previous-page').addEventListener('click',()=>{page--;render();});$('next-page').addEventListener('click',()=>{page++;render();});
 $('result-rows').addEventListener('change',event=>{const input=event.target.closest('[data-confirm]');if(!input)return;const row=rows[Number(input.dataset.confirm)];if(row.chosen&&!row.existing){row.confirmed=input.checked;persist();render();}});
 $('result-rows').addEventListener('click',event=>{const review=event.target.closest('[data-review]'),retry=event.target.closest('[data-retry]');if(review)openCandidates(Number(review.dataset.review));if(retry)startQuery(Number(retry.dataset.retry));});
-$('candidate-list').addEventListener('click',event=>{const button=event.target.closest('[data-choose]');if(!button)return;const row=rows[candidateIndex];row.chosen=row.candidates[Number(button.dataset.choose)];row.confirmed=true;persist();render();$('candidate-dialog').close();toast('已确认，该文献将包含在批量回填中。');});
-$('reject-candidates').addEventListener('click',()=>{const row=rows[candidateIndex];row.chosen=null;row.confirmed=false;row.status='none';persist();render();$('candidate-dialog').close();toast('已排除，回填时会跳过此文献。');});
+$('candidate-list').addEventListener('click',event=>{if(clearing||initializing)return;const button=event.target.closest('[data-choose]');if(!button)return;const row=rows[candidateIndex];row.chosen=row.candidates[Number(button.dataset.choose)];row.confirmed=true;persist();render();$('candidate-dialog').close();toast('已确认，该文献将包含在批量回填中。');});
+$('reject-candidates').addEventListener('click',()=>{if(clearing||initializing)return;const row=rows[candidateIndex];row.chosen=null;row.confirmed=false;row.status='none';persist();render();$('candidate-dialog').close();toast('已排除，回填时会跳过此文献。');});
 $('candidate-dialog').addEventListener('close',()=>{if(!$('candidate-dialog').open&&candidateIndex!==null)focusResultControl('data-review',candidateIndex);});
 $('confirm-high').addEventListener('click',()=>{const candidates=rows.filter(r=>r.status==='high'&&!r.confirmed);if(!candidates.length)return;if(!confirm(`确认采用 ${candidates.length} 条高匹配候选？\n\n这些记录的标题、第一作者、年份和文献类型通过了比对，但仍可能存在版本差异。确认后将包含在回填脚本中。`))return;candidates.forEach(r=>r.confirmed=true);persist();render();toast(`已整批确认 ${candidates.length} 条结果。`);});
 $('export-button').addEventListener('click',openExport);
@@ -274,6 +307,18 @@ $('download-report').addEventListener('click',report);$('export-csv').addEventLi
 for(const id of ['help-nav','help-top'])$(id).addEventListener('click',()=>$('help-dialog').showModal());
 document.querySelectorAll('[data-close]').forEach(button=>button.addEventListener('click',()=>$(button.dataset.close).close()));
 document.querySelectorAll('dialog').forEach(dialog=>dialog.addEventListener('click',event=>{if(event.target===dialog){const r=dialog.getBoundingClientRect();if(event.clientX<r.left||event.clientX>r.right||event.clientY<r.top||event.clientY>r.bottom)dialog.close();}}));
-$('clear-button').addEventListener('click',()=>{if(active)return;if(!confirm('清空当前浏览器中的文献与核对进度？Zotero 中的文献不受影响。'))return;rows=[];sourceName='';filter='all';page=1;cache.clear();try{localStorage.removeItem(STORE_KEY);}catch{}$('paste-input').value='';$('search').value='';$('email').value='';$('progress-box').hidden=true;notice('');render();toast('已清空本地记录。');});
-window.addEventListener('beforeunload',event=>{if(active){event.preventDefault();event.returnValue='';}});
-restore();render();
+$('clear-button').addEventListener('click',async()=>{
+  if(active||initializing||clearing)return;
+  if(!confirm('清空当前浏览器中的文献与核对进度？Zotero 中的文献不受影响。'))return;
+  clearing=true;saveRevision++;render();
+  try{
+    await sessions.clear();
+    rows=[];sourceName='';filter='all';page=1;cache.clear();
+    $('paste-input').value='';$('search').value='';$('email').value='';$('progress-box').hidden=true;
+    storageSuccess();notice('');toast('已清空本地记录。');
+  }catch{storageFailure('未能完整清空本地记录，当前文献仍保留在工作台。请稍后重试。');}
+  finally{clearing=false;render();}
+});
+window.addEventListener('beforeunload',event=>{if(active||clearing||pendingSaves||(storageFailed&&rows.length)){event.preventDefault();event.returnValue='';}});
+render();
+restore().finally(()=>{initializing=false;render();});

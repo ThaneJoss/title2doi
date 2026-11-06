@@ -16,7 +16,7 @@ export default [
     languageOptions: { globals: globals.node },
   },
   {
-    files: ['app.mjs', 'core.mjs', 'tests/e2e/**/*.mjs'],
+    files: ['app.mjs', 'core.mjs', 'session.mjs', 'tests/e2e/**/*.mjs'],
     languageOptions: { globals: globals.browser },
   },
 ];

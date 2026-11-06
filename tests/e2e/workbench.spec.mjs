@@ -62,6 +62,7 @@ function responseFor(item, doi = '10.5555/matching-study') {
 }
 
 async function importItems(page, items) {
+  await expect(page.locator('#file-input')).toBeEnabled();
   await page.locator('#file-input').setInputFiles({
     name: 'references.json',
     mimeType: 'application/json',
@@ -155,6 +156,7 @@ test('import, mocked query, confirmation, export, and restore retain original me
   const exported = JSON.parse(await readFile(await download.path(), 'utf8'));
   expect(exported).toEqual([{...paper, DOI: '10.5555/matching-study'}, existingPaper]);
 
+  await expect(page.locator('#storage-status')).toHaveText('进度已保存在此浏览器');
   await page.reload();
   await expect(page.locator('#notice')).toContainText('已恢复上次的 2 条文献及核对进度');
   await expect(page.getByRole('checkbox', {name: `确认匹配：${paper.title}`, exact: true})).toBeChecked();
@@ -288,4 +290,139 @@ test('local Worker serves security headers, JavaScript MIME, and a real 404', as
   await expect(page.locator('meta[name="robots"]')).toHaveAttribute('content', 'noindex');
   await assertAccessible(page);
   await attachScreenshot(page, testInfo, 'not-found-page');
+});
+
+test('a batch larger than localStorage capacity restores from IndexedDB with confirmations', async ({page, crossref}) => {
+  crossref.respond = () => responseFor(paper);
+  await page.goto('/');
+  const items = Array.from({length: 2500}, (_, i) => ({
+    ...paper, id: String(i), title: i ? 'Previously catalogued paper ' + i : paper.title,
+    abstract: 'x'.repeat(2400), ...(i ? {DOI: '10.5555/existing-' + i} : {}),
+  }));
+  expect(Buffer.byteLength(JSON.stringify(items))).toBeGreaterThan(5 * 1024 * 1024);
+  await importItems(page, items);
+  await page.getByRole('button', {name: '开始批量查询'}).click();
+  await expect(page.locator('#stat-high')).toHaveText('1');
+  await page.locator('[data-confirm="0"]').check();
+  await expect(page.locator('#storage-status')).toHaveText('进度已保存在此浏览器');
+  expect(await page.evaluate(() => localStorage.getItem('doi-desk-session-v1'))).toBeNull();
+  await page.reload();
+  await expect(page.locator('#stat-total')).toHaveText('2500');
+  await expect(page.locator('[data-confirm="0"]')).toBeChecked();
+  const saved = await page.evaluate(async () => {
+    const {createSessionStore} = await import('/session.mjs');
+    return (await createSessionStore().load()).snapshot;
+  });
+  expect(saved.items[0].raw.abstract).toBe(items[0].abstract);
+  expect(saved.items[2499].raw).toEqual(items[2499]);
+});
+
+test('legacy progress migrates but comparison titles require a fresh query', async ({page}) => {
+  await page.goto('/');
+  await expect(page.locator('#file-input')).toBeEnabled();
+  const candidate = {doi: '10.5555/legacy', title: paper.title, authors: 'Lin Chen', journal: 'Example', year: '2024', author: 'Chen', score: 100, reasons: []};
+  const comparison = {...paper, title: 'Association of mortality with HbA1c < 7% and age > 65 years'};
+  const saved = {version: 1, sourceName: 'legacy.json', items: [
+    {raw: paper, status: 'high', candidates: [candidate], chosen: candidate, confirmed: true},
+    {raw: comparison, status: 'high', candidates: [{...candidate, title: 'Association of mortality with HbA1c 65 years'}], chosen: candidate, confirmed: true},
+  ]};
+  await page.evaluate(value => localStorage.setItem('doi-desk-session-v1', JSON.stringify(value)), saved);
+  await page.reload();
+  await expect(page.locator('#stat-total')).toHaveText('2');
+  await expect(page.locator('[data-confirm="0"]')).toBeChecked();
+  await expect(page.locator('[data-confirm="1"]')).not.toBeChecked();
+  await expect(page.locator('#notice')).toContainText('1 条含比较式的旧结果需重新查询和确认');
+  await expect(page.locator('#storage-status')).toHaveText('进度已保存在此浏览器');
+  expect(await page.evaluate(() => localStorage.getItem('doi-desk-session-v1'))).toBeNull();
+  await page.reload();
+  await expect(page.locator('[data-confirm="0"]')).toBeChecked();
+  await expect(page.locator('#notice')).not.toContainText('旧结果');
+});
+
+for (const failure of ['quota', 'abort']) {
+  test('failed snapshot ' + failure + ' stays visible and cannot restore an older batch', async ({page}) => {
+    await page.addInitScript(() => {
+      const put = IDBObjectStore.prototype.put;
+      IDBObjectStore.prototype.put = function(value, key) {
+        const mode = sessionStorage.getItem('test-save-failure');
+        if (key === 'snapshot' && mode === 'quota') throw new DOMException('Test quota exhausted', 'QuotaExceededError');
+        const request = put.call(this, value, key);
+        if (key === 'snapshot' && mode === 'abort') request.addEventListener('success', () => this.transaction.abort());
+        return request;
+      };
+    });
+    page.on('dialog', dialog => dialog.accept());
+    await page.goto('/');
+    await importItems(page, [paper]);
+    await expect(page.locator('#storage-status')).toHaveText('进度已保存在此浏览器');
+    await page.evaluate(mode => sessionStorage.setItem('test-save-failure', mode), failure);
+    await importItems(page, [secondPaper]);
+    await expect(page.locator('#storage-warning')).toContainText('浏览器未能保存当前进度');
+    await expect(page.locator('#storage-status')).toHaveText('当前进度未保存');
+    await expect(page.locator('#result-rows')).toContainText(secondPaper.title);
+    await page.reload();
+    await expect(page.locator('#storage-warning')).toContainText('上次保存未完成');
+    await expect(page.locator('#stat-total')).toHaveText('0');
+    await page.evaluate(() => sessionStorage.removeItem('test-save-failure'));
+    await importItems(page, [secondPaper]);
+    await expect(page.locator('#storage-status')).toHaveText('进度已保存在此浏览器');
+    await expect(page.locator('#storage-warning')).toBeHidden();
+    await page.reload();
+    await expect(page.locator('#result-rows')).toContainText(secondPaper.title);
+    await expect(page.locator('#result-rows')).not.toContainText(paper.title);
+    await page.getByRole('button', {name: '清空本地记录', exact: true}).click();
+    await expect(page.locator('#stat-total')).toHaveText('0');
+    await page.reload();
+    await expect(page.locator('#stat-total')).toHaveText('0');
+    await expect(page.locator('#storage-warning')).toBeHidden();
+  });
+}
+
+test('clearing blocks review actions until the stored session is removed', async ({page, crossref}) => {
+  crossref.respond = () => responseFor(paper);
+  page.on('dialog', dialog => dialog.accept());
+  await page.goto('/');
+  await importItems(page, [paper]);
+  await page.getByRole('button', {name: '开始批量查询'}).click();
+  await expect(page.locator('#stat-high')).toHaveText('1');
+  await expect(page.locator('#storage-status')).toHaveText('进度已保存在此浏览器');
+  await page.locator('[data-review="0"]').click();
+  await page.keyboard.press('Escape');
+  // Hold a real IndexedDB write lock so clear() must wait while controls render.
+  await page.evaluate(async () => {
+    const database = await new Promise((resolve, reject) => {
+      const request = indexedDB.open('doi-desk-sessions', 1);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    let released = false;
+    window.releaseClearTestLock = () => { released = true; };
+    const transaction = database.transaction('session', 'readwrite');
+    const store = transaction.objectStore('session');
+    transaction.oncomplete = () => database.close();
+    transaction.onabort = () => database.close();
+    function hold() {
+      const request = store.get('pending');
+      request.onsuccess = () => { if (!released) hold(); };
+    }
+    hold();
+  });
+  try {
+    await page.getByRole('button', {name: '清空本地记录', exact: true}).click();
+    await expect(page.locator('[data-review="0"]')).toBeDisabled();
+    await page.locator('[data-review="0"]').dispatchEvent('click');
+    await expect(page.locator('#candidate-dialog')).toBeHidden();
+    await page.locator('[data-choose="0"]').dispatchEvent('click');
+    await page.locator('#reject-candidates').dispatchEvent('click');
+  } finally {
+    await page.evaluate(() => window.releaseClearTestLock());
+  }
+  await expect(page.locator('#stat-total')).toHaveText('0');
+  await page.reload();
+  await expect(page.locator('#stat-total')).toHaveText('0');
+  const snapshot = await page.evaluate(async () => {
+    const {createSessionStore} = await import('/session.mjs');
+    return (await createSessionStore().load()).snapshot;
+  });
+  expect(snapshot).toBeNull();
 });
