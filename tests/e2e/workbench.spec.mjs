@@ -377,3 +377,52 @@ for (const failure of ['quota', 'abort']) {
     await expect(page.locator('#storage-warning')).toBeHidden();
   });
 }
+
+test('clearing blocks review actions until the stored session is removed', async ({page, crossref}) => {
+  crossref.respond = () => responseFor(paper);
+  page.on('dialog', dialog => dialog.accept());
+  await page.goto('/');
+  await importItems(page, [paper]);
+  await page.getByRole('button', {name: '开始批量查询'}).click();
+  await expect(page.locator('#stat-high')).toHaveText('1');
+  await expect(page.locator('#storage-status')).toHaveText('进度已保存在此浏览器');
+  await page.locator('[data-review="0"]').click();
+  await page.keyboard.press('Escape');
+  // Hold a real IndexedDB write lock so clear() must wait while controls render.
+  await page.evaluate(async () => {
+    const database = await new Promise((resolve, reject) => {
+      const request = indexedDB.open('doi-desk-sessions', 1);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    let released = false;
+    window.releaseClearTestLock = () => { released = true; };
+    const transaction = database.transaction('session', 'readwrite');
+    const store = transaction.objectStore('session');
+    transaction.oncomplete = () => database.close();
+    transaction.onabort = () => database.close();
+    function hold() {
+      const request = store.get('pending');
+      request.onsuccess = () => { if (!released) hold(); };
+    }
+    hold();
+  });
+  try {
+    await page.getByRole('button', {name: '清空本地记录', exact: true}).click();
+    await expect(page.locator('[data-review="0"]')).toBeDisabled();
+    await page.locator('[data-review="0"]').dispatchEvent('click');
+    await expect(page.locator('#candidate-dialog')).toBeHidden();
+    await page.locator('[data-choose="0"]').dispatchEvent('click');
+    await page.locator('#reject-candidates').dispatchEvent('click');
+  } finally {
+    await page.evaluate(() => window.releaseClearTestLock());
+  }
+  await expect(page.locator('#stat-total')).toHaveText('0');
+  await page.reload();
+  await expect(page.locator('#stat-total')).toHaveText('0');
+  const snapshot = await page.evaluate(async () => {
+    const {createSessionStore} = await import('/session.mjs');
+    return (await createSessionStore().load()).snapshot;
+  });
+  expect(snapshot).toBeNull();
+});

@@ -25,6 +25,7 @@ function storageSuccess(){
   $('storage-warning').hidden=true;
 }
 function persist(){
+  if(clearing) return Promise.resolve(false);
   const revision=++saveRevision;
   const snapshot={version:2,sourceName,items:rows.map(row=>({raw:row.raw,status:row.status,candidates:row.candidates,chosen:row.chosen,confirmed:row.confirmed,error:row.error}))};
   pendingSaves++;$('storage-status').textContent='正在保存进度…';
@@ -136,7 +137,7 @@ function render(){
     const status=row.confirmed?'confirmed':row.status;
     const selectable=!!row.chosen&&!row.existing&&!clearing;
     const details=[authorText(row.raw),row.year,row.raw['container-title']].filter(Boolean).map(esc).join(' · ');
-    const action=['high','review'].includes(row.status)||row.candidates.length?`<button class="table-action" data-review="${row.index}">核对</button>`:row.status==='error'?`<button class="table-action" data-retry="${row.index}" ${active?'disabled':''}>重试</button>`:'<span class="missing-text">—</span>';
+    const action=['high','review'].includes(row.status)||row.candidates.length?`<button class="table-action" data-review="${row.index}" ${clearing?'disabled':''}>核对</button>`:row.status==='error'?`<button class="table-action" data-retry="${row.index}" ${active?'disabled':''}>重试</button>`:'<span class="missing-text">—</span>';
     return `<tr><td><input type="checkbox" data-confirm="${row.index}" aria-label="确认匹配：${esc(row.title)}" ${row.confirmed?'checked':''} ${selectable?'':'disabled'} title="${selectable?'勾选后包含在批量回填中':'请先核对并选择候选'}"></td><td><div class="paper-title">${esc(row.title||'（缺少标题）')}</div><div class="paper-meta">${details||'无作者或年份信息'}</div>${row.status==='invalid'?'<div class="error-text">请补充标题后重新导出</div>':''}</td><td><span class="tag ${status}">${row.status==='querying'?'<span class="spinner"></span>':''}${row.confirmed?icon('check'):''}${row.confirmed?'已确认':statusNames[row.status]}</span>${candidate&&!row.existing?`<span class="score-text">匹配分数 ${candidate.score} / 100</span>`:''}</td><td>${doi?`${doiMarkup}${!row.confirmed&&!row.existing?'<span class="score-text">候选 · 核对后确认</span>':''}`:`<span class="missing-text">${row.status==='none'?'暂无匹配 DOI':row.status==='querying'?'正在检索…':'—'}</span>`}${row.status==='error'?`<div class="error-text">${esc(row.error)}</div>`:''}</td><td>${action}</td></tr>`;
   }).join('');
   $('empty-state').hidden=!!filtered.length;
@@ -231,6 +232,7 @@ async function startQuery(onlyIndex=null){
 }
 
 function openCandidates(index){
+  if(clearing||initializing) return;
   const row=rows[index];if(!row) return;candidateIndex=index;
   $('candidate-original').innerHTML=`<div class="small-label">ZOTERO 原文献</div><h3>${esc(row.title)}</h3><p>${esc(authorText(row.raw)||'作者缺失')} · ${esc(row.year||'年份缺失')}${row.raw['container-title']?' · '+esc(row.raw['container-title']):''}</p>`;
   $('candidate-list').innerHTML=row.candidates.map((candidate,i)=>`<article class="candidate-card ${row.confirmed&&row.chosen?.doi===candidate.doi?'chosen':''}"><div class="candidate-card-top"><h3>${esc(candidate.title)}</h3><div class="match-score">${candidate.score}<small> / 100</small></div></div><p class="candidate-meta">${esc(candidate.authors||'作者未提供')} · ${esc(candidate.year||'年份未提供')}<br>${esc(candidate.journal||'来源未提供')} · ${esc(candidate.type)}</p><div class="candidate-evidence">${candidate.reasons.map(reason=>`<span class="${/不同|相差/.test(reason)?'conflict':''}">${esc(reason)}</span>`).join('')}</div><div class="candidate-bottom"><a class="doi-link" href="${esc(doiURL(candidate.doi))}" target="_blank" rel="noopener noreferrer">${esc(candidate.doi)} ↗</a><button class="button small ${row.chosen?.doi===candidate.doi&&row.confirmed?'secondary':''}" data-choose="${i}">${row.chosen?.doi===candidate.doi&&row.confirmed?'已确认使用':'确认使用'}</button></div></article>`).join('');
@@ -291,8 +293,8 @@ $('search').addEventListener('input',()=>{page=1;render();});
 $('previous-page').addEventListener('click',()=>{page--;render();});$('next-page').addEventListener('click',()=>{page++;render();});
 $('result-rows').addEventListener('change',event=>{const input=event.target.closest('[data-confirm]');if(!input)return;const row=rows[Number(input.dataset.confirm)];if(row.chosen&&!row.existing){row.confirmed=input.checked;persist();render();}});
 $('result-rows').addEventListener('click',event=>{const review=event.target.closest('[data-review]'),retry=event.target.closest('[data-retry]');if(review)openCandidates(Number(review.dataset.review));if(retry)startQuery(Number(retry.dataset.retry));});
-$('candidate-list').addEventListener('click',event=>{const button=event.target.closest('[data-choose]');if(!button)return;const row=rows[candidateIndex];row.chosen=row.candidates[Number(button.dataset.choose)];row.confirmed=true;persist();render();$('candidate-dialog').close();toast('已确认，该文献将包含在批量回填中。');});
-$('reject-candidates').addEventListener('click',()=>{const row=rows[candidateIndex];row.chosen=null;row.confirmed=false;row.status='none';persist();render();$('candidate-dialog').close();toast('已排除，回填时会跳过此文献。');});
+$('candidate-list').addEventListener('click',event=>{if(clearing||initializing)return;const button=event.target.closest('[data-choose]');if(!button)return;const row=rows[candidateIndex];row.chosen=row.candidates[Number(button.dataset.choose)];row.confirmed=true;persist();render();$('candidate-dialog').close();toast('已确认，该文献将包含在批量回填中。');});
+$('reject-candidates').addEventListener('click',()=>{if(clearing||initializing)return;const row=rows[candidateIndex];row.chosen=null;row.confirmed=false;row.status='none';persist();render();$('candidate-dialog').close();toast('已排除，回填时会跳过此文献。');});
 $('candidate-dialog').addEventListener('close',()=>{if(!$('candidate-dialog').open&&candidateIndex!==null)focusResultControl('data-review',candidateIndex);});
 $('confirm-high').addEventListener('click',()=>{const candidates=rows.filter(r=>r.status==='high'&&!r.confirmed);if(!candidates.length)return;if(!confirm(`确认采用 ${candidates.length} 条高匹配候选？\n\n这些记录的标题、第一作者、年份和文献类型通过了比对，但仍可能存在版本差异。确认后将包含在回填脚本中。`))return;candidates.forEach(r=>r.confirmed=true);persist();render();toast(`已整批确认 ${candidates.length} 条结果。`);});
 $('export-button').addEventListener('click',openExport);
@@ -317,6 +319,6 @@ $('clear-button').addEventListener('click',async()=>{
   }catch{storageFailure('未能完整清空本地记录，当前文献仍保留在工作台。请稍后重试。');}
   finally{clearing=false;render();}
 });
-window.addEventListener('beforeunload',event=>{if(active||pendingSaves||(storageFailed&&rows.length)){event.preventDefault();event.returnValue='';}});
+window.addEventListener('beforeunload',event=>{if(active||clearing||pendingSaves||(storageFailed&&rows.length)){event.preventDefault();event.returnValue='';}});
 render();
 restore().finally(()=>{initializing=false;render();});
