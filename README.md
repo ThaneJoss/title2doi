@@ -133,6 +133,8 @@ npx playwright install chromium
 npm run test:e2e
 ```
 
+依赖安全：Wrangler 固定为 4.158.0，使用官方配套的 Miniflare 5.20261104.0-beta 与 Undici 7.30.1；升级后需验证本地静态服务及 `check:worker`，不改变 `compatibility_date`。ESLint 10.12.0 的依赖仍要求存在 [GHSA-g3hv-75wg-m249](https://github.com/advisories/GHSA-g3hv-75wg-m249) 的 minimatch 10.x，因此 `overrides` 暂时仅在该 ESLint 子树固定 minimatch 11.0.4。该主版本移除了部分 API 并调整匹配行为；升级前后已核对本项目 10 个模块的 lint 结果，以及 20 条路径的忽略与有效配置。后续 ESLint 原生采用修复版本时，应移除此覆盖、用 npm 重新生成锁文件，再复查文件覆盖、忽略规则和完整检查。审计继续使用 `npm audit --audit-level=high`。
+
 `test:e2e` 自动启动仅本地运行的 Wrangler 静态服务，不需要 Cloudflare 登录。Linux 首次使用可运行 `npx playwright install --with-deps chromium` 安装浏览器系统依赖。已有 Chromium 时可设置 `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` 指向其可执行文件。
 
 ## 匹配与接口
