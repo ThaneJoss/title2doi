@@ -4,7 +4,7 @@
 
 纯 HTML / CSS / JavaScript，浏览器运行时无框架依赖，无需 Crossref 或 Zotero API Key。界面沿用 [webapps](https://github.com/ThaneJoss/webapps) 的 Web Apps 标识、蓝色主色、浅灰背景、顶部导航和白色圆角卡片。
 
-目标域名：**https://title2doi.thanejoss.com**。域名已写入 Workers 配置、canonical、Open Graph 与 sitemap；正式访问需完成下面的 Cloudflare 部署和域名绑定。
+目标域名：**https://title2doi.thanejoss.com**。域名已写入 Workers 配置、canonical、Open Graph 与 sitemap；正式访问需完成下面的 Cloudflare 部署和生产路由配置。
 
 ## 如何使用
 
@@ -46,11 +46,11 @@ Workers Static Assets 与 Pages 都可以托管本项目，选择其中一种即
 | 部署命令 | `npm run deploy:worker` |
 | Node.js | 24，参考 `.node-version` |
 
-`deploy:worker` 直接执行本地锁定版本的 `wrangler deploy`，由 `wrangler.jsonc` 统一定义静态资源目录、构建步骤和自定义域名。仓库根目录的 `wrangler.jsonc` 会被默认部署命令自动识别，并在部署前构建、校验 `dist/`。这是只托管静态资源的 Worker，无需额外编写后端脚本或配置数据库。
+`deploy:worker` 直接执行本地锁定版本的 `wrangler deploy`，由 `wrangler.jsonc` 统一定义静态资源目录、构建步骤和生产路由。仓库根目录的 `wrangler.jsonc` 会被默认部署命令自动识别，并在部署前构建、校验 `dist/`。这是只托管静态资源的 Worker，无需额外编写后端脚本或配置数据库。
 
 **已有 Cloudflare 项目请检查 Settings → Build 中保存的生产分支部署命令**：改成 `npm run deploy:worker`，删除旧命令中的 `--assets .`、`--assets ./` 或 `--assets /opt/buildhome/repo`。根目录可以是仓库根目录，但静态资源目录必须是 `dist`。
 
-配置中的 Custom Domain 为 `title2doi.thanejoss.com`。确保 `thanejoss.com` 在部署账户中，并授予正常部署所需的权限；Wrangler 会在部署时按配置绑定域名及证书。若该域名已有其他绑定，先在 Cloudflare 中处理冲突。
+配置通过 `title2doi.thanejoss.com/*` Worker Route 接收生产请求。确保 `thanejoss.com` 在部署账户中，并授予正常部署所需的权限。沿用现有 CNAME、优选 IP 链路及 Worker Route；DNS 记录和代理状态由现有 DNS 配置维护，不在本项目部署中更改。Wrangler 应用普通路由，不创建 Custom Domain 或替换 CNAME。部署后需核验真实域名入口。
 
 命令行部署：
 
@@ -65,7 +65,7 @@ npm run deploy:worker
 
 既有 Workers Builds Git 集成使用 `npx wrangler preview` 发布非生产分支预览，生产分支继续使用上面的 `npm run deploy:worker`。两个命令都直接读取 `wrangler.jsonc`，不需要自定义 API 部署或重试脚本。
 
-按照 [Wrangler 官方预览配置](https://developers.cloudflare.com/workers/previews/configuration/#wrangler-configuration-file)，本项目只有静态资源，因此显式配置空的 `"previews": {}`。`assets`、构建步骤与兼容日期保持顶层；生产自定义域名也保留原有顶层 `routes`，不放入 `previews`。预览地址取决于 Cloudflare 已有的 Preview URL 设置，不替换生产域名或生产流量；构建成功后仍需核对平台是否返回可访问的预览地址。若缺少此块，`wrangler preview` 会在上传前报错。
+按照 [Wrangler 官方预览配置](https://developers.cloudflare.com/workers/previews/configuration/#wrangler-configuration-file)，本项目只有静态资源，因此显式配置空的 `"previews": {}`。`assets`、构建步骤与兼容日期保持顶层；生产路由保留在顶层 `routes`，不放入 `previews`。预览地址取决于 Cloudflare 已有的 Preview URL 设置，不替换生产域名或生产流量；构建成功后仍需核对平台是否返回可访问的预览地址。若缺少此块，`wrangler preview` 会在上传前报错。
 
 `verify:dist` 会检查预览块存在且没有生产绑定或路由，防止配置缺失再次进入 PR；`check:worker` 是打包 dry run，不代表真实预览发布成功。分支预览结果仍以该提交的 Cloudflare `Workers Builds: title2doi` 检查与平台日志为准。
 
@@ -100,7 +100,7 @@ Pages 使用上面的控制台构建设置。根目录的 `wrangler.jsonc` 是 W
 
 `wrangler deploy` 会读取配置并通过 Cloudflare API 应用它。日志中的 `/assets-upload-session` 和 `/subdomain` 请求由 Wrangler 自身发出。504 表示该部署请求超时；保留原始日志和 Ray ID，稍后重新部署，持续失败时联系 Cloudflare 支持。
 
-项目直接保留 Wrangler 的成功或失败状态，不额外运行重试脚本或 `wrangler triggers deploy`。`Uploaded title2doi` 表示上传步骤完成，不能单凭这一行确认自定义域名已配置成功。
+项目直接保留 Wrangler 的成功或失败状态，不额外运行重试脚本或 `wrangler triggers deploy`。`Uploaded title2doi` 表示上传步骤完成，不能单凭这一行确认生产路由已应用成功。
 
 ### 边缘与静态资源
 
@@ -172,7 +172,7 @@ Crossref 可能不收录某些文献；未找到不代表文献一定没有 DOI�
 | `.github/workflows/ci.yml` | 固定版本通用 CI 调用，自动发现标准检查 |
 | `scripts/build.mjs` | 生成可部署的静态目录 `dist/` |
 | `scripts/verify-dist.mjs` | 检查资源、页面绑定、域名、CSP 和 404 配置 |
-| `wrangler.jsonc` | 自动识别的 Workers Static Assets、构建与自定义域名配置 |
+| `wrangler.jsonc` | 自动识别的 Workers Static Assets、构建与生产路由配置 |
 | `.assetsignore` | 误用根目录作为静态资源目录时的公开文件白名单 |
 | `_headers`、`404.html` | Workers / Pages 共用响应头与错误页 |
 
@@ -199,3 +199,4 @@ PR（包括 draft）、push、merge group 和手动运行调用自动跟随 `mai
 - [Pages 自定义域名](https://developers.cloudflare.com/pages/configuration/custom-domains/)
 
 本项目是独立辅助工具，与 Zotero 或 Crossref 官方无隶属关系。
+
