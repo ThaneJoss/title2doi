@@ -11,6 +11,7 @@
   },
   "previews": {},
   "routes": [
-    { "pattern": "title2doi.thanejoss.com", "custom_domain": true }
+    { "pattern": "title2doi.thanejoss.com/*", "zone_name": "thanejoss.com" }
   ]
 }
+
