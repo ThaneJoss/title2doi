@@ -7,7 +7,7 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 const output = resolve(root, 'dist');
 const read = name => readFile(resolve(output, name), 'utf8');
 const names = await readdir(output);
-const expected = ['index.html', '404.html', 'styles.css', 'app.mjs', 'core.mjs', 'favicon.svg', 'robots.txt', 'sitemap.xml', '_headers'];
+const expected = ['index.html', '404.html', 'styles.css', 'app.mjs', 'core.mjs', 'session.mjs', 'favicon.svg', 'robots.txt', 'sitemap.xml', '_headers'];
 assert.deepEqual([...names].sort(), [...expected].sort(), 'Only the website asset allowlist should be published');
 let totalBytes = 0;
 for (const name of names) {

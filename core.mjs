@@ -1,12 +1,23 @@
 export function plain(value = '') {
-  return String(value).replace(/<[^>]*>/g, '').replace(/&#(x[0-9a-f]+|\d+);/gi, (_, n) => {
+  const entities = {amp:'&',lt:'<',gt:'>',quot:'"',apos:"'",nbsp:' '};
+  // Strip actual inline formatting before decoding; encoded tags are literal text.
+  return String(value).replace(/<\/?(?:i|b|em|strong|sub|sup|span)(?:\s+[a-z_:][\w:.-]*(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>\x60]+))?)*\s*\/?>/gi, '').replace(/&(#(?:x[0-9a-f]+|\d+)|amp|lt|gt|quot|apos|nbsp);/gi, (_, entity) => {
+    if (entity[0] !== '#') return entities[entity.toLowerCase()];
+    const n = entity.slice(1);
     const code = n[0].toLowerCase() === 'x' ? parseInt(n.slice(1), 16) : Number(n);
     return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : '';
-  }).replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;|&#39;/g, "'").replace(/&nbsp;/g, ' ').trim();
+  }).trim();
 }
 
+// Inputs are already plain text; never decode or strip their contents again.
 export function norm(value) {
-  return plain(value).normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim().replace(/\s+/g, ' ');
+  return String(value ?? '').normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim().replace(/\s+/g, ' ');
+}
+
+function titleConstraints(value) {
+  // Keep scientific values and comparison directions out of fuzzy matching.
+  const text = String(value).normalize('NFKC').replace(/−/g, '-').replace(/≤/g, '<=').replace(/≥/g, '>=').replace(/≠/g, '!=');
+  return (text.match(/[+-]?\d+(?:[.,]\d+)*|[<>]=?|!=|=/g) || []).join(' ');
 }
 
 export const escapeHTML = (value) => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -44,7 +55,7 @@ export function parseCSL(text) {
     if (item.author != null && (!Array.isArray(item.author) || item.author.some(a => !a || typeof a !== 'object'))) throw new Error(`第 ${i + 1} 条 author 格式不正确。`);
     if (item.DOI != null && typeof item.DOI !== 'string') throw new Error(`第 ${i + 1} 条 DOI 应为文本。`);
   }
-  return items.map((raw, index) => ({index, raw, title:plain(raw.title || ''), year:yearOf(raw.issued), author:firstAuthor(raw), existing:String(raw.DOI || '').trim(), status:raw.DOI?.trim() ? 'existing' : norm(raw.title || '').length < 4 ? 'invalid' : 'ready', candidates:[], chosen:null, confirmed:false, error:''}));
+  return items.map((raw, index) => ({index, raw, title:plain(raw.title || ''), year:yearOf(raw.issued), author:firstAuthor(raw), existing:String(raw.DOI || '').trim(), status:raw.DOI?.trim() ? 'existing' : norm(plain(raw.title || '')).length < 4 ? 'invalid' : 'ready', candidates:[], chosen:null, confirmed:false, error:''}));
 }
 
 function dice(a, b) {
@@ -77,6 +88,7 @@ export function rankCandidates(row, works) {
     const title=plain(work.title?.[0] || '');
     if(!title) return [];
     const titleScore=titleSimilarity(row.title,title);
+    const titleConflict=titleConstraints(row.title)!==titleConstraints(title);
     const year=yearOf(work.issued || work.published);
     const author=firstAuthor(work);
     const authorMatch=!!row.author && !!author && norm(row.author)===norm(author);
@@ -89,10 +101,11 @@ export function rankCandidates(row, works) {
     if(typeMismatch) score-=6;
     const reasons=[`标题相似度 ${Math.round(titleScore*100)} / 100`,row.author&&author?(authorMatch?'第一作者一致':'第一作者不同'):'缺少作者用于比对',yearDelta!==null?(yearMatch?'年份一致':`年份相差 ${yearDelta} 年`):'缺少年份用于比对'];
     if(typeMismatch) reasons.push('文献类型不同');
-    return [{doi,title,year,author,authors:authorText(work),journal:plain(work['container-title']?.[0]||''),type:work.type||'',titleScore,score:Math.round(score),authorMatch,yearMatch,typeMismatch,reasons}];
+    if(titleConflict) reasons.push('标题中的数字或比较符不同');
+    return [{doi,title,year,author,authors:authorText(work),journal:plain(work['container-title']?.[0]||''),type:work.type||'',titleScore,titleConflict,score:Math.round(score),authorMatch,yearMatch,typeMismatch,reasons}];
   }).sort((a,b)=>b.score-a.score);
   const top=candidates[0], second=candidates[1];
-  const high=!!top && top.titleScore>=0.96 && top.authorMatch && top.yearMatch && !top.typeMismatch && norm(row.title).length>=20 && (!second || top.score-second.score>=8);
+  const high=!!top && top.titleScore>=0.96 && top.authorMatch && top.yearMatch && !top.typeMismatch && !top.titleConflict && norm(row.title).length>=20 && (!second || top.score-second.score>=8);
   return {candidates,high};
 }
 
@@ -115,9 +128,12 @@ export function csvReport(rows) {
   return '\uFEFF'+[['标题','第一作者','年份','原 DOI','确认 DOI','状态','匹配分数','候选标题'],...rows.map(r=>[r.title,r.author,r.year,r.existing,r.confirmed?r.chosen?.doi:'',r.confirmed?'已确认':statusNames[r.status],r.chosen?.score??'',r.chosen?.title??''])].map(line=>line.map(cell).join(',')).join('\r\n');
 }
 
-// Self-contained function: its source is included in scripts copied into Zotero.
+// makeZoteroScript includes the shared text helpers used by this function.
 export async function zoteroApply(payload, apply, Z, promptConfirm) {
-  function normalize(s) { return String(s||'').replace(/<[^>]*>/g,'').replace(/&amp;/g,'&').replace(/&nbsp;/g,' ').normalize('NFKD').replace(/\p{M}/gu,'').toLowerCase().replace(/[^\p{L}\p{N}]+/gu,' ').trim().replace(/\s+/g,' '); }
+  function titleKey(value) {
+    const text=plain(value);
+    return norm(text)+'\u0000'+titleConstraints(text);
+  }
   const pane=Z.getActiveZoteroPane();
   const items=pane?.getSelectedItems().filter(item=>item.isRegularItem()) || [];
   if(!items.length) return '请先在 Zotero 主窗口选中要补全 DOI 的原文献，再运行脚本。';
@@ -126,7 +142,7 @@ export async function zoteroApply(payload, apply, Z, promptConfirm) {
   for(const entry of payload) {
     const prefix=entry.title;
     if(!/^10\.\d{4,9}\/\S+$/i.test(entry.doi)) {report.push('跳过无效 DOI：'+prefix);continue;}
-    let matches=items.filter(item=>normalize(item.getField('title'))===normalize(entry.title));
+    let matches=items.filter(item=>titleKey(item.getField('title'))===titleKey(entry.title));
     if(entry.key) matches=matches.filter(item=>item.key===entry.key);
     else {
       // Without a stable Zotero item key, require two additional exact checks.
@@ -134,7 +150,7 @@ export async function zoteroApply(payload, apply, Z, promptConfirm) {
       matches=matches.filter(item=>{
         const y=String(item.getField('date')||'').match(/\b(?:1[5-9]|20|21)\d{2}\b/)?.[0];
         const creator=item.getCreators()[0];
-        return y===entry.year && normalize(creator?.lastName)===normalize(entry.author);
+        return y===entry.year && norm(plain(creator?.lastName || ''))===norm(entry.author);
       });
     }
     if(matches.length!==1) {report.push((matches.length?'存在重复条目，未更改：':'未在所选条目中找到：')+prefix);continue;}
@@ -160,5 +176,5 @@ export async function zoteroApply(payload, apply, Z, promptConfirm) {
 
 export function makeZoteroScript(rows, apply=false) {
   const payload=confirmedRows(rows).map(r=>({title:r.raw.title,year:r.year,author:r.author,key:String(r.raw.id||'').match(/^https?:\/\/(?:www\.)?zotero\.org\/(?:users\/(?:local\/)?[^/]+|groups\/[^/]+)\/items\/([A-Z0-9]{8})$/i)?.[1]||'',doi:r.chosen.doi}));
-  return '// DOI 补全工作台 · '+(apply?'确认后写入':'仅预览，不写入')+'\n// 在 Zotero 主窗口选中原文献；工具 → 开发者 → Run JavaScript。\n// 只处理所选条目的空白 DOI。运行前请备份 Zotero 数据。\nconst payload = '+JSON.stringify(payload,null,2)+';\nconst run = '+zoteroApply.toString()+';\nreturn await run(payload, '+apply+', Zotero, message => confirm(message));';
+  return '// DOI 补全工作台 · '+(apply?'确认后写入':'仅预览，不写入')+'\n// 在 Zotero 主窗口选中原文献；工具 → 开发者 → Run JavaScript。\n// 只处理所选条目的空白 DOI。运行前请备份 Zotero 数据。\nconst payload = '+JSON.stringify(payload,null,2)+';\n'+[plain,norm,titleConstraints].map(fn=>fn.toString()).join('\n')+'\nconst run = '+zoteroApply.toString()+';\nreturn await run(payload, '+apply+', Zotero, message => confirm(message));';
 }

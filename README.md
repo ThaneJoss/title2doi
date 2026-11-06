@@ -139,7 +139,7 @@ npm run test:e2e
 
 - 接口：`https://api.crossref.org/works`，使用 `query.bibliographic` 查询标题、第一作者和年份。
 - 每条最多取 5 个候选，并对标题相似度、第一作者、年份和文献类型进行排序。
-- 高匹配要求标题相似度至少 0.96、第一作者和年份一致、类型不冲突、标题长度足够，且领先第二候选至少 8 分。
+- 高匹配要求标题相似度至少 0.96、第一作者和年份一致、类型不冲突、标题长度足够，且领先第二候选至少 8 分。标题中的数字或比较方向不同会转为人工核对；科学比较式不会被当作 HTML 删除。
 - 高匹配仍需用户确认才进入回填脚本。匹配分数是启发式排序分，不是准确概率。
 - 请求串行执行，设置超时，处理 HTTP 429 和 5xx 并等待重试；连续失败时自动暂停。
 - 联系邮箱为选填，填写后作为 `mailto` 参数发送给 Crossref。
@@ -148,7 +148,9 @@ Crossref 可能不收录某些文献；未找到不代表文献一定没有 DOI�
 
 ## 数据与隐私
 
-文件只在浏览器中解析。文献元数据、候选和确认进度保存在当前网站来源的 `localStorage`，可通过页面底部 **清空本地记录** 删除。
+文件只在浏览器中解析。文献元数据、候选和确认进度保存在当前网站来源的 IndexedDB，可通过页面底部 **清空本地记录** 删除。旧版 `localStorage` 进度会在首次打开时迁移；迁移成功后才删除旧副本。旧版含比较符的文献会重新查询和确认，避免沿用曾丢失比较条件的候选。
+
+以页脚保存状态为准。浏览器仍可能因隐私设置、空间不足或事务中断而无法保存；页面会持续提示，请保持页面打开并导出核对表及已确认的 CSL JSON。已记录为未完成的保存会阻止自动恢复过期快照；如果浏览器同时禁止 IndexedDB 和小型失败标记的写入，则无法跨刷新记录失败，需先导出再关闭页面。清空操作也等待存储事务完成后才报告成功。
 
 查询仅向 Crossref 发送标题、第一作者、年份和选填邮箱，不上传 PDF，不访问 Zotero 账号。请求不携带凭据或 Referer。网站本身不需要后端服务器。
 
@@ -161,7 +163,8 @@ Crossref 可能不收录某些文献；未找到不代表文献一定没有 DOI�
 | `favicon.svg` | 与主站一致的 Web Apps 标识 |
 | `app.mjs` | 交互、请求队列、本地进度和导出 |
 | `core.mjs` | CSL 解析、匹配评分及 Zotero 回填脚本生成 |
-| `tests/core.test.mjs` | 核心逻辑及模拟 Zotero API 测试 |
+| `session.mjs` | IndexedDB 进度保存、旧版迁移及失败恢复保护 |
+| `tests/core.test.mjs`、`tests/session.test.mjs` | 核心逻辑、模拟 Zotero API 与保存顺序/失败恢复策略测试 |
 | `tests/e2e/`、`playwright.config.mjs` | 桌面/移动端 Chromium、模拟 Crossref、axe 与截图验收 |
 | `eslint.config.mjs` | 浏览器与 Node.js 模块的 JavaScript 检查 |
 | `.github/workflows/ci.yml` | 固定版本通用 CI 调用，自动发现标准检查 |
@@ -179,7 +182,7 @@ Crossref 可能不收录某些文献；未找到不代表文献一定没有 DOI�
 
 PR（包括 draft）、push、merge group 和手动运行调用自动跟随 `main` 的通用模板 `ThaneJoss/github-ci/.github/workflows/ci.yml@main`。通用 CI 按标准元数据发现 ESLint、核心单元测试和静态构建，并运行 JavaScript 语法检查与原生依赖审计；最终 Gate 要求选中的检查成功。此调用没有项目专属 job、inputs 或 secrets。
 
-产物验证、Worker dry run 和浏览器验收保留为上面的本地检查命令，不属于通用 CI 自动覆盖。浏览器测试覆盖导入、查询、暂停/继续、失败重试、确认与导出、刷新恢复、DOI 百分号字符、键盘焦点、弹窗无障碍、布局和真实 404；Crossref 完全使用固定响应，其他外部浏览器请求会被拒绝。测试不会操作真实 Zotero 或 Cloudflare 资源。截图、HTML 报告及失败 trace 保存在本地 `playwright-report/` 和 `test-results/`，不再由专属 workflow 上传。
+产物验证、Worker dry run 和浏览器验收保留为上面的本地检查命令，不属于通用 CI 自动覆盖。浏览器测试覆盖超过 5 MiB 的批次恢复、旧版迁移、保存配额失败/事务中止、导入、查询、暂停/继续、失败重试、确认与导出、刷新恢复、DOI 百分号字符、键盘焦点、弹窗无障碍、布局和真实 404；Crossref 完全使用固定响应，其他外部浏览器请求会被拒绝。测试不会操作真实 Zotero 或 Cloudflare 资源。截图、HTML 报告及失败 trace 保存在本地 `playwright-report/` 和 `test-results/`，不再由专属 workflow 上传。
 
 项目使用原生 JavaScript，没有独立 TypeScript 类型检查；ESLint 检查语法与变量使用，实际 DOM 绑定和交互由产物验证及浏览器测试覆盖。自动无障碍检查使用 axe，不能替代完整人工读屏验收。真实 Crossref 可用性和 Zotero 客户端写入不属于 CI；首次使用仍应先检查预览结果。
 
